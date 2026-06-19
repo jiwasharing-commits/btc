@@ -22,13 +22,14 @@ function chart(title, timeframe, closedCandles, strip = []) {
   <div class="chart-panel tradingview-panel">
     <div class="chart-title"><h2>${title}</h2><p>Candles loaded: ${countLabel} • Visible closed: ${closedCandles.length} • Active TF last closed: ${fmtPrice(lastClosed?.close)}${runningLabel}</p></div>
     <div id="main-chart" class="trading-chart" aria-label="TradingView-style candlestick chart"></div>
+    <div id="chart-overlay-layer" class="chart-overlay-layer" aria-hidden="true"></div>
     <div class="running-overlay ${hasRunningPreview ? '' : 'is-hidden'}"><span>Running Preview<br><small>Preview Only</small></span></div>
     <div class="chart-watermark">${timeframe} • BTCUSDT</div>
   </div>`;
 }
 
 function clearTradingChart() {
-  qs('#main-chart')?.querySelectorAll('.fvg-zone-box').forEach((node) => node.remove());
+  clearChartOverlayLayer();
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
@@ -65,10 +66,6 @@ function addDummyPriceLines(closedCandles, running) {
   }
 
   const timeframe = getActiveTimeframe();
-  if (activeLayers["S/R"]) {
-    addSrSegmentOverlays(closedCandles, timeframe);
-  }
-
   if (activeLayers.Confluence) {
     const candidate = confluenceContext?.strongestCandidate;
     if (candidate) {
@@ -91,27 +88,72 @@ function addScenarioLevelPriceLines() {
   });
 }
 
-function addLimitedSegment(candles, price, color, title, lineStyle = LightweightCharts.LineStyle.Dashed) {
-  if (!tradingChart || candles.length < 2 || !Number.isFinite(Number(price))) return;
-  const startIndex = Math.max(0, candles.length - Math.max(16, Math.round(candles.length * 0.28)));
-  const start = candles[startIndex].open_time;
-  const interval = candles.at(-1).open_time - candles.at(-2).open_time || 3600000;
-  const end = candles.at(-1).open_time + interval * 10;
-  const series = tradingChart.addLineSeries({ color, lineWidth: 1, lineStyle, priceLineVisible: false, lastValueVisible: true, title });
-  series.setData([{ time: Math.floor(start / 1000), value: price }, { time: Math.floor(end / 1000), value: price }]);
-  channelSeries.push(series);
+function getChartOverlayLayer() {
+  return qs('#chart-overlay-layer');
 }
 
-function addSrSegmentOverlays(candles, timeframe) {
+function clearChartOverlayLayer(type = null) {
+  const layer = getChartOverlayLayer();
+  if (!layer) return;
+  const selector = type ? `[data-overlay-type="${type}"]` : '[data-overlay-type]';
+  layer.querySelectorAll(selector).forEach((node) => node.remove());
+}
+
+function addBoundedZoneBox({ type, className, label, lower, upper, startTime, endTime }) {
+  const layer = getChartOverlayLayer();
+  const container = qs('#main-chart');
+  if (!layer || !container || !tradingChart || !candleSeries) return;
+  const firstVisible = tradingChart.timeScale().timeToCoordinate(Math.floor(startTime / 1000));
+  const lastVisible = tradingChart.timeScale().timeToCoordinate(Math.floor(endTime / 1000));
+  const fallbackStart = startTime <= (getActiveCandles()[0]?.open_time ?? startTime) ? 0 : firstVisible;
+  const fallbackEnd = endTime >= (getActiveCandles().at(-1)?.open_time ?? endTime) ? container.clientWidth - 8 : lastVisible;
+  const x1 = Number.isFinite(firstVisible) ? firstVisible : fallbackStart;
+  const x2 = Number.isFinite(lastVisible) ? lastVisible : fallbackEnd;
+  const y1 = candleSeries.priceToCoordinate(upper);
+  const y2 = candleSeries.priceToCoordinate(lower);
+  if (![x1, x2, y1, y2].every(Number.isFinite) || x2 <= 0 || x1 >= container.clientWidth || x2 <= x1) return;
+  const box = document.createElement('div');
+  box.dataset.overlayType = type;
+  box.className = className;
+  box.style.left = `${Math.max(0, x1)}px`;
+  box.style.width = `${Math.min(container.clientWidth, x2) - Math.max(0, x1)}px`;
+  box.style.top = `${Math.min(y1, y2)}px`;
+  box.style.height = `${Math.max(8, Math.abs(y2 - y1))}px`;
+  box.innerHTML = `<span>${label}</span>`;
+  layer.appendChild(box);
+}
+
+function buildSrVisualItems(timeframe) {
   const sr = srContexts[timeframe];
-  if (!sr?.available) return;
-  [sr.nearestSupport, sr.strongestSupport].filter(Boolean).slice(0, 2).forEach((zone) => {
-    addLimitedSegment(candles, zone.upper, "rgba(34, 197, 94, .82)", "S", LightweightCharts.LineStyle.Dashed);
-    addLimitedSegment(candles, zone.lower, "rgba(34, 197, 94, .42)", "", LightweightCharts.LineStyle.Dotted);
-  });
-  [sr.nearestResistance, sr.strongestResistance].filter(Boolean).slice(0, 2).forEach((zone) => {
-    addLimitedSegment(candles, zone.lower, "rgba(249, 115, 22, .86)", "R", LightweightCharts.LineStyle.Dashed);
-    addLimitedSegment(candles, zone.upper, "rgba(249, 115, 22, .42)", "", LightweightCharts.LineStyle.Dotted);
+  const candles = getActiveCandles();
+  const lastTime = candles.at(-1)?.open_time;
+  const interval = candles.length > 1 ? candles.at(-1).open_time - candles.at(-2).open_time : BINANCE_INTERVAL_MS[timeframe];
+  if (!sr?.available || !lastTime) return [];
+  const normalize = (zone, kind) => {
+    const midpoint = zone.midpoint || ((zone.lower + zone.upper) / 2);
+    const visualPad = Math.max(midpoint * 0.0015, Math.abs(zone.upper - zone.lower) / 2);
+    return {
+      ...zone,
+      lower: zone.lower === zone.upper ? midpoint - visualPad : zone.lower,
+      upper: zone.lower === zone.upper ? midpoint + visualPad : zone.upper,
+      kind,
+      startTime: zone.lastTime || zone.firstTime || candles[Math.max(0, candles.length - 36)].open_time,
+      endTime: lastTime + interval * 8
+    };
+  };
+  return [
+    ...(sr.supportZones || []).sort((a, b) => (a.distancePct ?? 999) - (b.distancePct ?? 999)).slice(0, 3).map((zone) => normalize(zone, "support")),
+    ...(sr.resistanceZones || []).sort((a, b) => (a.distancePct ?? 999) - (b.distancePct ?? 999)).slice(0, 3).map((zone) => normalize(zone, "resistance"))
+  ];
+}
+
+function renderSrZoneSegments(activeTimeframe) {
+  clearChartOverlayLayer("sr");
+  if (!activeLayers["S/R"]) return;
+  buildSrVisualItems(activeTimeframe).forEach((zone) => {
+    const prefix = activeTimeframe === "1W" ? "W" : activeTimeframe === "1D" ? "D" : activeTimeframe;
+    const label = `${prefix} ${zone.kind === "support" ? "Support" : "Resistance"}`;
+    addBoundedZoneBox({ type: "sr", className: `sr-zone-box ${zone.kind} ${zone.status === "broken" ? "broken" : ""} ${zone.status === "retest" ? "retest" : ""}`, label, lower: zone.lower, upper: zone.upper, startTime: zone.startTime, endTime: zone.endTime });
   });
 }
 
@@ -121,30 +163,37 @@ function fvgLabel(timeframe, zone) {
   return `${prefix} ${side} FVG`;
 }
 
-function addFvgZoneBoxes(candles, timeframe) {
-  const container = qs('#main-chart');
-  container?.querySelectorAll('.fvg-zone-box').forEach((node) => node.remove());
-  if (!tradingChart || !candleSeries || !activeLayers.FVG || candles.length < 2 || !container) return;
-  const zones = (fvgContexts[timeframe]?.activeFvgs || []).slice(0, 3).map((zone) => ({ zone, timeframe, isHtf: false }));
-  if (activeWorkspace === "Daily + 4H Setup" && fvgContexts["1D"]?.activeFvgs?.[0]) {
-    zones.push({ zone: fvgContexts["1D"].activeFvgs[0], timeframe: "1D", isHtf: true });
-  }
-  const startCandle = candles[Math.max(0, candles.length - 28)];
-  const firstX = tradingChart.timeScale().timeToCoordinate(Math.floor(startCandle.open_time / 1000));
-  const lastX = tradingChart.timeScale().timeToCoordinate(Math.floor(candles.at(-1).open_time / 1000));
-  if (!Number.isFinite(firstX) || !Number.isFinite(lastX)) return;
-  zones.forEach(({ zone, timeframe: zoneTf, isHtf }, index) => {
-    const top = candleSeries.priceToCoordinate(zone.upper);
-    const bottom = candleSeries.priceToCoordinate(zone.lower);
-    if (!Number.isFinite(top) || !Number.isFinite(bottom)) return;
-    const box = document.createElement('div');
-    box.className = `fvg-zone-box ${zone.type === "bullish" ? "bullish" : "bearish"} ${zone.status === "Partially Filled" ? "partial" : ""} ${isHtf ? "htf" : ""}`;
-    box.style.left = `${Math.max(0, firstX + index * 10)}px`;
-    box.style.width = `${Math.max(82, lastX - firstX + 72 - index * 8)}px`;
-    box.style.top = `${Math.min(top, bottom)}px`;
-    box.style.height = `${Math.max(16, Math.abs(bottom - top))}px`;
-    box.innerHTML = `<span>${fvgLabel(zoneTf, zone)}</span>`;
-    container.appendChild(box);
+function deriveFvgVisualEndTime(fvg, candles, activeTimeframe) {
+  const startIndex = candles.findIndex((candle) => candle.open_time >= (fvg.createdAtTime || fvg.startTime || 0));
+  const after = startIndex >= 0 ? candles.slice(startIndex + 1) : [];
+  const filled = after.find((candle) => fvg.type === "bullish" ? candle.low <= fvg.lower : candle.high >= fvg.upper);
+  if (filled && fvg.status === "Filled") return filled.open_time;
+  const last = candles.at(-1)?.open_time ?? fvg.endTime;
+  const interval = candles.length > 1 ? candles.at(-1).open_time - candles.at(-2).open_time : BINANCE_INTERVAL_MS[activeTimeframe];
+  return last + interval * 8;
+}
+
+function buildFvgVisualItems(activeTimeframe) {
+  const candles = getActiveCandles();
+  const byType = { bullish: [], bearish: [] };
+  const add = (zone, timeframe = activeTimeframe, isHtf = false) => {
+    if (!zone || zone.status === "Invalid") return;
+    const bucket = zone.type === "bearish" ? byType.bearish : byType.bullish;
+    bucket.push({ zone, timeframe, isHtf, distance: zone.distancePct ?? 999 });
+  };
+  (fvgContexts[activeTimeframe]?.activeFvgs || []).forEach((zone) => add(zone));
+  if (activeWorkspace === "Daily + 4H Setup") add(fvgContexts["1D"]?.nearestFvg, "1D", true);
+  if (activeWorkspace === "1H Timing") add(fvgContexts["4H"]?.nearestFvg, "4H", true);
+  return [...byType.bullish.sort((a, b) => a.distance - b.distance).slice(0, 3), ...byType.bearish.sort((a, b) => a.distance - b.distance).slice(0, 3)]
+    .map((item) => ({ ...item, startTime: item.zone.createdAtTime || item.zone.startTime, endTime: deriveFvgVisualEndTime(item.zone, candles, activeTimeframe) }))
+    .filter((item) => item.startTime && item.endTime);
+}
+
+function renderFvgZoneBoxes(activeTimeframe) {
+  clearChartOverlayLayer("fvg");
+  if (!activeLayers.FVG) return;
+  buildFvgVisualItems(activeTimeframe).forEach(({ zone, timeframe, isHtf, startTime, endTime }) => {
+    addBoundedZoneBox({ type: "fvg", className: `fvg-zone-box ${zone.type === "bullish" ? "bullish" : "bearish"} ${zone.status === "Partially Filled" ? "partial" : ""} ${zone.status === "Filled" ? "filled" : ""} ${isHtf ? "htf" : ""}`, label: fvgLabel(timeframe, zone), lower: zone.lower, upper: zone.upper, startTime, endTime });
   });
 }
 
@@ -248,12 +297,18 @@ function renderTradingChart() {
   addDummyMarkers(closedCandles, running, timeframe);
   addChannelOverlays(closedCandles, timeframe);
   tradingChart.timeScale().fitContent();
-  requestAnimationFrame(() => addFvgZoneBoxes(closedCandles, timeframe));
+  requestAnimationFrame(() => {
+    renderFvgZoneBoxes(timeframe);
+    renderSrZoneSegments(timeframe);
+  });
 
   resizeObserver = new ResizeObserver(() => {
     if (!tradingChart || !container.clientWidth || !container.clientHeight) return;
     tradingChart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
-    requestAnimationFrame(() => addFvgZoneBoxes(closedCandles, timeframe));
+    requestAnimationFrame(() => {
+      renderFvgZoneBoxes(timeframe);
+      renderSrZoneSegments(timeframe);
+    });
   });
   resizeObserver.observe(container);
 }
@@ -265,8 +320,12 @@ window.BtcDash.chart = {
   clearTradingChart,
   addDummyPriceLines,
   addScenarioLevelPriceLines,
-  addSrSegmentOverlays,
-  addFvgZoneBoxes,
+  clearChartOverlayLayer,
+  buildSrVisualItems,
+  renderSrZoneSegments,
+  buildFvgVisualItems,
+  deriveFvgVisualEndTime,
+  renderFvgZoneBoxes,
   addDummyMarkers,
   addChannelOverlays,
   renderTradingChart
