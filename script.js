@@ -48,6 +48,14 @@ const STRUCTURE_CONFIG = {
   "1H": { swingLeft: 4, swingRight: 4, minCandles: 120, maxSwings: 60, label: "1H Timing Structure" }
 };
 const structureContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
+const SR_CONFIG = {
+  "1W": { maxZones: 8, mergeTolerancePct: 3.0, recentLookbackSwings: 24, minTouches: 1, label: "Weekly Major S/R" },
+  "1D": { maxZones: 10, mergeTolerancePct: 1.8, recentLookbackSwings: 32, minTouches: 1, label: "Daily Context S/R" },
+  "4H": { maxZones: 12, mergeTolerancePct: 1.0, recentLookbackSwings: 40, minTouches: 1, label: "4H Setup S/R" },
+  "1H": { maxZones: 10, mergeTolerancePct: 0.6, recentLookbackSwings: 48, minTouches: 1, label: "1H Timing S/R" }
+};
+const srContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
+let marketZonesContext = { upside: [], downside: [], nearestSupport: null, nearestResistance: null, activeTimeframe: null, summary: "" };
 const rangeState = { "Weekly Map": "3Y", "Daily + 4H Setup": "3M", "1H Timing": "14D" };
 let activeWorkspace = "Weekly Map";
 let activeDetail = "Indicator";
@@ -168,6 +176,7 @@ async function loadAllRepoData({ runAutoUpdate = autoUpdateEnabled } = {}) {
     const cachedData = loadCacheData();
     applyRepoAndCache(repoData, cachedData);
     rebuildAllStructureContexts();
+    rebuildAllSrContexts();
     dataStatusMessage = cachedData ? "Repo data loaded and merged with local cache." : "Repo data loaded.";
     loading = false;
     renderAll();
@@ -309,6 +318,7 @@ async function autoUpdateFromBinance() {
   }
 
   rebuildAllStructureContexts();
+  rebuildAllSrContexts();
   const entries = Object.entries(updateSummary);
   const successEntries = entries.filter(([, result]) => !result.error);
   const totalAdded = successEntries.reduce((sum, [, result]) => sum + (result.addedClosed ?? 0), 0);
@@ -423,6 +433,125 @@ function rebuildAllStructureContexts() {
   });
 }
 
+function createEmptySrContext(timeframe, reason = "No clear support/resistance detected") {
+  return { available: false, timeframe, supportZones: [], resistanceZones: [], brokenZones: [], retestZones: [], nearestSupport: null, nearestResistance: null, strongestSupport: null, strongestResistance: null, summary: reason };
+}
+
+function buildRawSrLevelsFromSwings(timeframe) {
+  const structure = structureContexts[timeframe];
+  if (!structure?.available) return [];
+  const config = SR_CONFIG[timeframe];
+  return structure.labels.slice(-config.recentLookbackSwings).map((swing) => ({
+    type: swing.type === "low" ? "support" : "resistance",
+    price: swing.price,
+    time: swing.time,
+    label: `${timeframe} ${swing.label}`,
+    source: "swing",
+    swingLabel: swing.label
+  }));
+}
+
+function clusterSrLevelsIntoZones(levels, timeframe) {
+  const config = SR_CONFIG[timeframe];
+  const zones = [];
+  levels.sort((a, b) => a.price - b.price).forEach((level) => {
+    const tolerance = level.price * (config.mergeTolerancePct / 100);
+    const existing = zones.find((zone) => zone.type === level.type && Math.abs(zone.midpoint - level.price) <= tolerance);
+    if (existing) {
+      existing.lower = Math.min(existing.lower, level.price);
+      existing.upper = Math.max(existing.upper, level.price);
+      existing.midpoint = (existing.lower + existing.upper) / 2;
+      existing.touches += 1;
+      existing.labels = [...new Set([...existing.labels, level.swingLabel])];
+      existing.lastTime = Math.max(existing.lastTime, level.time);
+      existing.strengthScore = Math.min(10, existing.touches * 2 + existing.labels.length);
+    } else {
+      zones.push({ id: `${timeframe}-${level.type}-${zones.length + 1}`, type: level.type, lower: level.price, upper: level.price, midpoint: level.price, touches: 1, strengthScore: 3, source: `${timeframe} swings`, labels: [level.swingLabel], firstTime: level.time, lastTime: level.time, status: "active" });
+    }
+  });
+  return zones.filter((zone) => zone.touches >= config.minTouches).sort((a, b) => b.strengthScore - a.strengthScore || b.lastTime - a.lastTime).slice(0, config.maxZones);
+}
+
+function distanceToZonePct(zone, price) {
+  if (!zone || !price) return null;
+  if (price >= zone.lower && price <= zone.upper) return 0;
+  const edge = price < zone.lower ? zone.lower : zone.upper;
+  return Math.abs(edge - price) / price * 100;
+}
+
+function deriveSrZoneStatus(zone, currentPrice, candles) {
+  const last = candles.at(-1);
+  const distance = distanceToZonePct(zone, currentPrice);
+  if (!last || currentPrice == null) return "far";
+  if (zone.type === "support" && last.close < zone.lower) return "broken";
+  if (zone.type === "resistance" && last.close > zone.upper) return "broken";
+  if (distance != null && distance <= 1) return "near";
+  const previous = candles.at(-2);
+  if (previous && zone.type === "support" && previous.close < zone.lower && last.close >= zone.lower) return "retest";
+  if (previous && zone.type === "resistance" && previous.close > zone.upper && last.close <= zone.upper) return "retest";
+  if (zone.type === "support" && zone.upper < currentPrice) return "active";
+  if (zone.type === "resistance" && zone.lower > currentPrice) return "active";
+  return "far";
+}
+
+function enrichSrZone(zone, timeframe, currentPrice, candles) {
+  const status = deriveSrZoneStatus(zone, currentPrice, candles);
+  return { ...zone, timeframe, status, distancePct: distanceToZonePct(zone, currentPrice) };
+}
+
+function buildSrContext(timeframe) {
+  const candles = marketData[timeframe] || [];
+  const structure = structureContexts[timeframe];
+  if (!structure?.available || !candles.length) return createEmptySrContext(timeframe, "Structure not available");
+  const currentPrice = candles.at(-1)?.close;
+  const rawLevels = buildRawSrLevelsFromSwings(timeframe);
+  const zones = clusterSrLevelsIntoZones(rawLevels, timeframe).map((zone) => enrichSrZone(zone, timeframe, currentPrice, candles));
+  if (!zones.length) return createEmptySrContext(timeframe);
+  const supportZones = zones.filter((zone) => zone.type === "support" && zone.status !== "broken").sort((a, b) => (a.distancePct ?? 999) - (b.distancePct ?? 999));
+  const resistanceZones = zones.filter((zone) => zone.type === "resistance" && zone.status !== "broken").sort((a, b) => (a.distancePct ?? 999) - (b.distancePct ?? 999));
+  const brokenZones = zones.filter((zone) => zone.status === "broken");
+  const retestZones = zones.filter((zone) => zone.status === "retest");
+  const strongestSupport = [...supportZones].sort((a, b) => b.strengthScore - a.strengthScore)[0] ?? null;
+  const strongestResistance = [...resistanceZones].sort((a, b) => b.strengthScore - a.strengthScore)[0] ?? null;
+  const context = { available: true, timeframe, supportZones, resistanceZones, brokenZones, retestZones, nearestSupport: supportZones[0] ?? null, nearestResistance: resistanceZones[0] ?? null, strongestSupport, strongestResistance, summary: `${SR_CONFIG[timeframe].label}: ${supportZones.length} support zones, ${resistanceZones.length} resistance zones.` };
+  console.info("[S/R Context]", timeframe, { supportZones: supportZones.length, resistanceZones: resistanceZones.length, nearestSupport: context.nearestSupport, nearestResistance: context.nearestResistance });
+  return context;
+}
+
+function zoneToMarketRow(zone, side, timeframe, currentPrice) {
+  return { id: zone.id, side, zoneType: zone.type, timeframe, label: `${timeframe} ${zone.type === "support" ? "Support" : "Resistance"}`, lower: zone.lower, upper: zone.upper, midpoint: zone.midpoint, distancePct: distanceToZonePct(zone, currentPrice), strengthScore: zone.strengthScore, status: zone.status, source: zone.source, note: timeframe === "1W" || timeframe === "1D" ? "HTF context nearby" : "S/R only for now" };
+}
+
+function buildMarketZonesContext(activeTimeframe) {
+  const currentPrice = marketData[activeTimeframe]?.at(-1)?.close;
+  if (!currentPrice) return { upside: [], downside: [], nearestSupport: null, nearestResistance: null, activeTimeframe, summary: "No clear support/resistance detected" };
+  const rows = [];
+  [activeTimeframe, "1W", "1D", "4H"].filter((tf, i, arr) => arr.indexOf(tf) === i).forEach((timeframe) => {
+    const context = srContexts[timeframe];
+    if (!context?.available) return;
+    [...context.supportZones, ...context.resistanceZones].forEach((zone) => {
+      if (zone.midpoint > currentPrice) rows.push(zoneToMarketRow(zone, "upside", timeframe, currentPrice));
+      if (zone.midpoint < currentPrice) rows.push(zoneToMarketRow(zone, "downside", timeframe, currentPrice));
+    });
+  });
+  const upside = rows.filter((row) => row.side === "upside").sort((a, b) => a.distancePct - b.distancePct).slice(0, 3);
+  const downside = rows.filter((row) => row.side === "downside").sort((a, b) => a.distancePct - b.distancePct).slice(0, 3);
+  return { upside, downside, nearestSupport: downside[0] ?? null, nearestResistance: upside[0] ?? null, activeTimeframe, summary: "S/R only for now. FVG and channel will be added in later patches." };
+}
+
+function rebuildAllSrContexts() {
+  ["1W", "1D", "4H", "1H"].forEach((timeframe) => { srContexts[timeframe] = buildSrContext(timeframe); });
+  marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
+}
+
+function formatZone(zone) {
+  return zone ? `${fmtPrice(zone.lower)} – ${fmtPrice(zone.upper)}` : "—";
+}
+
+function formatDistance(value) {
+  return Number.isFinite(Number(value)) ? `${Number(value).toFixed(2)}%` : "—";
+}
+
 function getVisibleCandles(timeframe, range) {
   const candles = marketData[timeframe] ?? [];
   if (!candles.length || range === "Full") return candles;
@@ -490,6 +619,16 @@ function getGlobalLatestPrice() {
   return { price: null, source: "—" };
 }
 
+function getZoneRiskLabel(timeframe = getActiveTimeframe()) {
+  const context = srContexts[timeframe];
+  if (!context?.available) return "No Clear Zone";
+  const supportDistance = context.nearestSupport?.distancePct;
+  const resistanceDistance = context.nearestResistance?.distancePct;
+  if (Number.isFinite(resistanceDistance) && resistanceDistance <= 1.5) return "Near Resistance";
+  if (Number.isFinite(supportDistance) && supportDistance <= 1.5) return "Near Support";
+  return "Between Zones";
+}
+
 function renderSummary() {
   const latest = getGlobalLatestPrice();
   const oneHour = marketData["1H"];
@@ -505,7 +644,7 @@ function renderSummary() {
     "4H Setup": `${fourH.bias}<small>${fourH.bosChoch.status}</small>`,
     "1H Timing": `${oneH.bias}<small>${oneH.bosChoch.status}</small>`,
     "Top Scenario": "Bullish 8/10",
-    "Risk": "Medium"
+    "Risk": getZoneRiskLabel()
   };
   qs('.summary-grid').innerHTML = Object.entries(summary).map(([k, v]) => `<article class="summary-card"><div class="card-label">${k}</div><div class="card-value">${v}</div></article>`).join('');
 }
@@ -582,11 +721,17 @@ function addDummyPriceLines(closedCandles, running) {
   }
 
   if (!activeLayers["S/R"]) return;
-  const recent = closedCandles.slice(-80);
-  const support = Math.min(...recent.map((c) => c.low));
-  const resistance = Math.max(...recent.map((c) => c.high));
-  candleSeries.createPriceLine({ price: support, color: "#22c55e", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "Support" });
-  candleSeries.createPriceLine({ price: resistance, color: "#f97316", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "Resistance" });
+  const timeframe = getActiveTimeframe();
+  const sr = srContexts[timeframe];
+  if (!sr?.available) return;
+  sr.supportZones.slice(0, 3).forEach((zone, index) => {
+    candleSeries.createPriceLine({ price: zone.upper, color: "#22c55e", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: index === 0 ? "Support" : "S" });
+    candleSeries.createPriceLine({ price: zone.lower, color: "rgba(34, 197, 94, .55)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
+  });
+  sr.resistanceZones.slice(0, 3).forEach((zone, index) => {
+    candleSeries.createPriceLine({ price: zone.lower, color: "#f97316", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: index === 0 ? "Resistance" : "R" });
+    candleSeries.createPriceLine({ price: zone.upper, color: "rgba(249, 115, 22, .55)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
+  });
 }
 
 function addDummyMarkers(closedCandles, running, timeframe) {
@@ -698,7 +843,8 @@ function renderWorkspace() {
     el.innerHTML = `<div class="mtf-grid">${["1W", "1D", "4H", "1H"].map((tf) => {
       const candles = marketData[tf];
       const structure = structureContexts[tf] ?? createEmptyStructureContext(tf);
-      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>${structure.status}<br>BOS/CHoCH: ${structure.bosChoch.status}<br>Sequence: ${formatStructureSequence(structure)}`);
+      const sr = srContexts[tf] ?? createEmptySrContext(tf);
+      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>${structure.status}<br>BOS/CHoCH: ${structure.bosChoch.status}<br>S/R: Support ${formatZone(sr.nearestSupport)} | Resistance ${formatZone(sr.nearestResistance)}`);
     }).join('')}</div>`;
     return;
   }
@@ -707,9 +853,9 @@ function renderWorkspace() {
   requestAnimationFrame(renderTradingChart);
 }
 
-function setWorkspace(name) { activeWorkspace = name; renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace'); renderSummary(); renderWorkspace(); renderDetail(); }
+function setWorkspace(name) { activeWorkspace = name; marketZonesContext = buildMarketZonesContext(getActiveTimeframe()); renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace'); renderSummary(); renderWorkspace(); renderDetail(); }
 function setDetail(name) { activeDetail = name; renderTabs('.detail-tabs', details, activeDetail, 'setDetail'); renderDetail(); }
-function setRange(range) { rangeState[activeWorkspace] = range; renderSummary(); renderWorkspace(); renderDetail(); }
+function setRange(range) { rangeState[activeWorkspace] = range; marketZonesContext = buildMarketZonesContext(getActiveTimeframe()); renderSummary(); renderWorkspace(); renderDetail(); }
 
 function renderTable() {
   const rows = getActiveCandles().slice(-100).reverse();
@@ -730,6 +876,34 @@ function renderMtfStructureCards() {
   }).join('')}</div>`;
 }
 
+function renderMarketZonesCards() {
+  const upside = marketZonesContext.upside[0];
+  const downside = marketZonesContext.downside[0];
+  const retest = srContexts[getActiveTimeframe()]?.retestZones?.[0];
+  const zoneCard = (title, zone, type) => `<article class="market-zone-card"><div class="card-label">${title}</div><div class="sr-zone-value">${zone ? formatZone(zone) : "—"}</div><span class="zone-status">${zone?.status ?? "No Clear Zone"}</span><div class="zone-distance">${type ? `Type: ${type}<br>` : ""}Distance: ${formatDistance(zone?.distancePct)}<br>Strength: ${zone?.strengthScore ?? "—"}/10</div></article>`;
+  return `<div class="summary-box card"><strong>MARKET ZONES</strong><br>${marketZonesContext.summary}</div><div class="market-zones-grid">${zoneCard("Upside Watch", upside, upside?.label)}${zoneCard("Downside Watch", downside, downside?.label)}${zoneCard("Retest Zone", retest, retest?.type)}</div>`;
+}
+
+function renderSrTab() {
+  const activeTf = getActiveTimeframe();
+  const context = srContexts[activeTf] ?? createEmptySrContext(activeTf);
+  if (!context.available) return `<div class="summary-box card">${context.summary}</div>${renderMtfSrCards()}`;
+  const zoneDetails = (zone) => zone ? `Zone: ${formatZone(zone)}<br>TF: ${zone.timeframe}<br>Status: ${zone.status}<br>Distance: ${formatDistance(zone.distancePct)}<br>Strength: ${zone.strengthScore}/10` : "No clear support/resistance detected";
+  return `<div class="sr-card-grid">${[
+    ["Nearest Support", zoneDetails(context.nearestSupport)],
+    ["Nearest Resistance", zoneDetails(context.nearestResistance)],
+    ["Strongest Support", context.strongestSupport ? `Zone: ${formatZone(context.strongestSupport)}<br>Touches: ${context.strongestSupport.touches}<br>Source: ${context.strongestSupport.source}` : "—"],
+    ["Strongest Resistance", context.strongestResistance ? `Zone: ${formatZone(context.strongestResistance)}<br>Touches: ${context.strongestResistance.touches}<br>Source: ${context.strongestResistance.source}` : "—"]
+  ].map(([title, body]) => `<article class="sr-card"><div class="card-label">${title}</div><div class="sr-zone-value">${body}</div></article>`).join('')}</div>${renderMtfSrCards()}`;
+}
+
+function renderMtfSrCards() {
+  return `<div class="sr-card-grid">${["1W", "1D", "4H", "1H"].map((timeframe) => {
+    const context = srContexts[timeframe] ?? createEmptySrContext(timeframe);
+    return `<article class="sr-card"><div class="card-label">${timeframe === "1W" ? "Weekly S/R" : timeframe === "1D" ? "Daily S/R" : `${timeframe} S/R`}</div><div class="sr-zone-value">Support: ${formatZone(context.nearestSupport)}<br>Resistance: ${formatZone(context.nearestResistance)}</div><span class="sr-badge">${context.available ? "Active" : "Unavailable"}</span></article>`;
+  }).join('')}</div>`;
+}
+
 function renderDetail() {
   const el = qs('#detail-content');
   const grid = (items, cls='detail-grid') => `<div class="${cls}">${items.map(([a,b]) => card(a,b)).join('')}</div>`;
@@ -737,14 +911,14 @@ function renderDetail() {
   const latest = getGlobalLatestPrice();
   const data = {
     'Indicator': `<div class="selector-row">${['Volume','RSI','MACD','ATR','Volatility','Structure'].map(metric).join('')}</div>${grid([['Volume Status', last ? 'Loaded' : 'Waiting Data'],['Last Volume', fmtVolume(last?.volume)],['RSI','Placeholder'],['ATR','Placeholder'],['Volatility','Placeholder']], 'detail-grid six')}<div class="mini-chart"></div>`,
-    'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position','Placeholder'],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>`,
+    'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position','Placeholder'],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>${renderMarketZonesCards()}`,
     'Scenario Plan': `<h2>Multi-Scenario Planning</h2><p class="subtitle">Read-only planning context • not financial advice or a direct trading signal.</p><div class="chip-row">${['Bullish 8/10','Breakout 6/10','Wait 5/10','Bearish 4/10','Breakdown 2/10'].map((x,i)=>`<span class="chip ${i===0?'active':''}">${x}</span>`).join('')}</div><article class="card"><h2>Top Scenario: Bullish — 8/10</h2><div class="scenario-card">${[['Latest BTC Price',fmtPrice(latest.price)],['Watch Area','103,800 – 104,500'],['SL / Invalid','101,200'],['TP1','106,800'],['TP2','110,200'],['TP3','114,500'],['RR','1.2R / 2.4R / 3.6R'],['Status','Waiting Confirmation']].map(([a,b])=>`<div><span class="card-label">${a}</span><div class="card-value">${b}</div></div>`).join('')}</div></article>${grid([['Reason','Weekly HH-HL valid'],['Reason','4H bullish FVG active'],['Reason','Near support/channel'],['Risk','Invalid if close below SL']])}`,
     'Structure': (() => {
       const context = structureContexts[getActiveTimeframe()] ?? createEmptyStructureContext(getActiveTimeframe());
       return `${grid([['Active TF Bias', context.bias],['Structure Status', context.status],['Last Swing High', fmtPrice(context.lastSwingHigh?.price)],['Last Swing Low', fmtPrice(context.lastSwingLow?.price)],['BOS / CHoCH', context.bosChoch.status],['Sequence', formatStructureSequence(context)]], 'detail-grid six')}<div class="structure-note card">${context.summary}</div>${renderMtfStructureCards()}`;
     })(),
     'FVG': grid([['Nearest FVG','TF: 4H<br>Type: Placeholder<br>Zone: Pending detection<br>Status: Pending'],['Daily FVG','Type: Placeholder<br>Zone: Pending detection<br>Status: Pending'],['D+4H Confluence','Status: Pending<br>Overlap: Pending<br>Strength: Pending']]),
-    'S/R': grid([['Nearest Support','Zone: Pending detection<br>Source: Future logic<br>Distance: —'],['Nearest Resistance','Zone: Pending detection<br>Source: Future logic<br>Distance: —'],['Retest Zone','Zone: Pending detection<br>Status: Watching']]),
+    'S/R': renderSrTab(),
     'Channel': grid([['Weekly Channel','Direction: Pending<br>Position: Pending<br>Upper: —<br>Mid: —<br>Lower: —'],['Daily Channel','Direction: Pending<br>Status: No clear breakout'],['4H Channel','Direction: Pending<br>Position: Pending<br>Status: Pending']]),
     'Confluence': grid([['Zone 1 — Strong','Area: Pending<br>Sources: Pending<br>Score: —'],['Zone 2 — Moderate','Area: Pending<br>Sources: Pending<br>Score: —'],['Zone 3 — Risk Area','Area: Pending<br>Sources: Pending<br>Score: —']]),
     'Reaction Study': `<div class="selector-row">${['Event Type','Outcome Window','Target %','Range Basis'].map(metric).join('')}</div>${grid([['Total Events','Pending'],['Success Rate','Pending'],['Failed','Pending'],['Avg Upside','Pending'],['Avg Drawdown','Pending'],['Median Reaction','Pending']], 'detail-grid six')}`,

@@ -124,3 +124,11 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
 .structure-note { color: #c4d5e8; line-height: 1.6; }
 @media (max-width: 1200px) { .structure-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 768px) { .structure-card-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); } }
+.sr-card-grid, .market-zones-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+.market-zones-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sr-card, .market-zone-card { border: 1px solid var(--border); border-radius: 18px; padding: 16px; background: linear-gradient(180deg, rgba(21, 42, 68, .9), rgba(10, 23, 39, .9)); }
+.sr-zone-value { color: var(--text); font-weight: 850; line-height: 1.55; margin-top: 8px; }
+.sr-badge, .zone-status { display: inline-flex; margin-top: 10px; border-radius: 999px; padding: 6px 10px; background: rgba(57, 211, 255, .13); color: #b9f2ff; font-size: 12px; font-weight: 900; }
+.zone-distance { color: var(--muted); line-height: 1.55; margin-top: 8px; font-size: 13px; }
+@media (max-width: 1200px) { .sr-card-grid, .market-zones-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 768px) { .sr-card-grid, .market-zones-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); } }
