@@ -119,18 +119,34 @@ function addDummyMarkers(closedCandles, running, timeframe) {
   candleSeries.setMarkers(markers);
 }
 
-function addDummyChannel(candles) {
-  if (!tradingChart || !activeLayers.Channel || candles.length < 12) return;
-  const segment = candles.slice(-60);
-  const first = segment[0];
-  const last = segment.at(-1);
-  const upperOffset = Math.max(...segment.map((c) => c.high)) * 0.018;
-  const lowerOffset = Math.max(...segment.map((c) => c.high)) * 0.018;
-  const upper = tradingChart.addLineSeries({ color: "rgba(56, 189, 248, 0.72)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-  const lower = tradingChart.addLineSeries({ color: "rgba(167, 139, 250, 0.66)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-  upper.setData([{ time: Math.floor(first.open_time / 1000), value: first.high + upperOffset }, { time: Math.floor(last.open_time / 1000), value: last.high + upperOffset }]);
-  lower.setData([{ time: Math.floor(first.open_time / 1000), value: first.low - lowerOffset }, { time: Math.floor(last.open_time / 1000), value: last.low - lowerOffset }]);
-  channelSeries = [upper, lower];
+function channelSeriesPoint(line, time) {
+  const value = projectLineAtTime(line, time);
+  return Number.isFinite(value) ? { time: Math.floor(time / 1000), value } : null;
+}
+
+function addChannelLine(line, startTime, endTime, color, lineWidth, title) {
+  const start = channelSeriesPoint(line, startTime);
+  const end = channelSeriesPoint(line, endTime);
+  if (!start || !end) return;
+  const series = tradingChart.addLineSeries({ color, lineWidth, priceLineVisible: false, lastValueVisible: false, title });
+  series.setData([start, end]);
+  channelSeries.push(series);
+}
+
+function addChannelOverlays(candles, timeframe) {
+  if (!tradingChart || !activeLayers.Channel || candles.length < 2) return;
+  const firstTime = candles[0].open_time;
+  const lastTime = candles.at(-1).open_time;
+  getProjectedChannelContextsForActiveTimeframe(timeframe).forEach(({ timeframe: channelTimeframe, context, isLocal }) => {
+    if (!context?.available) return;
+    const prefix = channelTimeframe === "1W" ? "W" : channelTimeframe === "1D" ? "D" : channelTimeframe;
+    const mainColor = isLocal ? "rgba(56, 189, 248, 0.9)" : "rgba(148, 163, 184, 0.45)";
+    const lowerColor = isLocal ? "rgba(167, 139, 250, 0.85)" : "rgba(148, 163, 184, 0.35)";
+    const midColor = isLocal ? "rgba(250, 204, 21, 0.65)" : "rgba(148, 163, 184, 0.25)";
+    addChannelLine(context.upperLine, firstTime, lastTime, mainColor, isLocal ? 2 : 1, `${prefix} Upper`);
+    addChannelLine(context.lowerLine, firstTime, lastTime, lowerColor, isLocal ? 2 : 1, `${prefix} Lower`);
+    addChannelLine(context.midLine, firstTime, lastTime, midColor, 1, `${prefix} Mid`);
+  });
 }
 
 function renderTradingChart() {
@@ -178,7 +194,7 @@ function renderTradingChart() {
   candleSeries.setData(toChartCandles(displayCandles));
   addDummyPriceLines(closedCandles, running);
   addDummyMarkers(closedCandles, running, timeframe);
-  addDummyChannel(closedCandles);
+  addChannelOverlays(closedCandles, timeframe);
   tradingChart.timeScale().fitContent();
 
   resizeObserver = new ResizeObserver(() => {
@@ -195,6 +211,6 @@ window.BtcDash.chart = {
   clearTradingChart,
   addDummyPriceLines,
   addDummyMarkers,
-  addDummyChannel,
+  addChannelOverlays,
   renderTradingChart
 };

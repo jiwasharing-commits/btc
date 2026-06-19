@@ -59,6 +59,13 @@ const FVG_CONFIG = {
   "1H": { maxActiveZones: 10, minGapPct: 0.10, lookbackCandles: 600, label: "1H FVG" }
 };
 
+const CHANNEL_CONFIG = {
+  "1W": { minSwingPairs: 2, maxLookbackSwings: 24, maxChannelAgeCandles: 180, maxWidthPct: 65, minWidthPct: 8, touchTolerancePct: 3.0, breakConfirmPct: 1.0, label: "Weekly Major Channel" },
+  "1D": { minSwingPairs: 2, maxLookbackSwings: 32, maxChannelAgeCandles: 220, maxWidthPct: 28, minWidthPct: 4, touchTolerancePct: 1.6, breakConfirmPct: 0.7, label: "Daily Context Channel" },
+  "4H": { minSwingPairs: 2, maxLookbackSwings: 40, maxChannelAgeCandles: 260, maxWidthPct: 16, minWidthPct: 2, touchTolerancePct: 0.9, breakConfirmPct: 0.45, label: "4H Setup Channel" },
+  "1H": { minSwingPairs: 2, maxLookbackSwings: 48, maxChannelAgeCandles: 320, maxWidthPct: 10, minWidthPct: 1, touchTolerancePct: 0.55, breakConfirmPct: 0.25, label: "1H Timing Channel" }
+};
+
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.config = {
   DATA_FILES,
@@ -75,5 +82,6 @@ window.BtcDash.config = {
   AUTO_UPDATE_KEY,
   STRUCTURE_CONFIG,
   SR_CONFIG,
-  FVG_CONFIG
+  FVG_CONFIG,
+  CHANNEL_CONFIG
 };

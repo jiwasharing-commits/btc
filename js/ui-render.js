@@ -59,6 +59,7 @@ function renderSummary() {
   const daily = structureContexts["1D"] ?? createEmptyStructureContext("1D");
   const fourH = structureContexts["4H"] ?? createEmptyStructureContext("4H");
   const oneH = structureContexts["1H"] ?? createEmptyStructureContext("1H");
+  const channel = channelContexts[getActiveTimeframe()] ?? createEmptyChannelContext(getActiveTimeframe());
   const summary = {
     "Latest BTC Price": `${fmtPrice(latest.price)}<small>Source: ${latest.source}</small>`,
     "Weekly Bias": `${weekly.bias}<small>${weekly.status}</small>`,
@@ -66,6 +67,7 @@ function renderSummary() {
     "4H Setup": `${fourH.bias}<small>${fourH.bosChoch.status}</small>`,
     "1H Timing": `${oneH.bias}<small>${oneH.bosChoch.status}</small>`,
     "FVG Confluence": daily4hFvgConfluence.status === "Active Confluence" ? `Active D+4H ${daily4hFvgConfluence.type}` : daily4hFvgConfluence.status === "Conflict" ? "Conflict" : "No FVG Confluence",
+    "Channel": channel.status,
     "Top Scenario": "Bullish 8/10",
     "Risk": getZoneRiskLabel()
   };
@@ -95,7 +97,8 @@ function renderWorkspace() {
       const structure = structureContexts[tf] ?? createEmptyStructureContext(tf);
       const sr = srContexts[tf] ?? createEmptySrContext(tf);
       const fvg = fvgContexts[tf] ?? createEmptyFvgContext(tf);
-      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>${structure.status}<br>BOS/CHoCH: ${structure.bosChoch.status}<br>S/R: Support ${formatZone(sr.nearestSupport)} | Resistance ${formatZone(sr.nearestResistance)}<br>FVG: ${fvg.nearestFvg ? `${fvg.nearestFvg.status} ${fvg.nearestFvg.type}` : "None"}`);
+      const channel = channelContexts[tf] ?? createEmptyChannelContext(tf);
+      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>${structure.status}<br>BOS/CHoCH: ${structure.bosChoch.status}<br>S/R: Support ${formatZone(sr.nearestSupport)} | Resistance ${formatZone(sr.nearestResistance)}<br>FVG: ${fvg.nearestFvg ? `${fvg.nearestFvg.status} ${fvg.nearestFvg.type}` : "None"}<br>Channel: ${channel.status}`);
     }).join('')}</div>`;
     return;
   }
@@ -122,12 +125,20 @@ function renderMtfStructureCards() {
   }).join('')}</div>`;
 }
 
+function getCurrentChannelReactionZone() {
+  const context = channelContexts[getActiveTimeframe()];
+  const price = marketData[getActiveTimeframe()]?.at(-1)?.close;
+  if (!context?.available || !context.projectedLevels || !price) return null;
+  const mid = context.projectedLevels.mid;
+  return { lower: mid * 0.999, upper: mid * 1.001, status: context.status, distancePct: distanceToZonePct({ lower: mid, upper: mid }, price), strengthScore: 6, label: `${context.timeframe} Channel Midline` };
+}
+
 function renderMarketZonesCards() {
   const upside = marketZonesContext.upside[0];
   const downside = marketZonesContext.downside[0];
+  const reaction = getCurrentChannelReactionZone();
   const zoneCard = (title, zone, type) => `<article class="market-zone-card"><div class="card-label">${title}</div><div class="sr-zone-value">${zone ? formatZone(zone) : "—"}</div><span class="zone-status">${zone?.status ?? "No Clear Zone"}</span><div class="zone-distance">${type ? `Type: ${type}<br>` : ""}Distance: ${formatDistance(zone?.distancePct)}<br>Strength: ${zone?.strengthScore ?? "—"}/10</div></article>`;
-  const confluenceZone = daily4hFvgConfluence.overlapLower ? { lower: daily4hFvgConfluence.overlapLower, upper: daily4hFvgConfluence.overlapUpper, status: daily4hFvgConfluence.status, distancePct: null, strengthScore: daily4hFvgConfluence.strength === "Strong" ? 8 : 5 } : null;
-  return `<div class="summary-box card"><strong>MARKET ZONES</strong><br>${marketZonesContext.summary}</div><div class="market-zones-grid">${zoneCard("Upside Watch", upside, upside?.label)}${zoneCard("Downside Watch", downside, downside?.label)}${zoneCard("D+4H FVG Confluence", confluenceZone, daily4hFvgConfluence.type)}</div>`;
+  return `<div class="summary-box card"><strong>MARKET ZONES</strong><br>${marketZonesContext.summary}</div><div class="market-zones-grid">${zoneCard("Upside Watch", upside, upside?.label)}${zoneCard("Downside Watch", downside, downside?.label)}${zoneCard("Current Reaction", reaction, reaction?.label)}</div>`;
 }
 
 function renderSrTab() {
@@ -172,6 +183,38 @@ function renderMtfFvgCards() {
   }).join('')}</div>`;
 }
 
+
+function slopeLabel(context) {
+  if (!Number.isFinite(context?.slope)) return "—";
+  return context.slope > 0 ? "Up" : context.slope < 0 ? "Down" : "Flat";
+}
+
+function channelBoundaryDetail(context, key) {
+  if (!context?.available || !context.projectedLevels) return "No clear channel detected";
+  const price = context.projectedLevels[key];
+  const currentPrice = marketData[context.timeframe]?.at(-1)?.close;
+  return `Price: ${fmtPrice(price)}<br>Distance: ${formatDistance(distanceToZonePct({ lower: price, upper: price }, currentPrice))}`;
+}
+
+function renderMtfChannelCards() {
+  return `<div class="channel-card-grid">${["1W", "1D", "4H", "1H"].map((timeframe) => {
+    const context = channelContexts[timeframe] ?? createEmptyChannelContext(timeframe);
+    return `<article class="channel-card"><div class="card-label">${timeframe === "1W" ? "Weekly Channel" : timeframe === "1D" ? "Daily Channel" : `${timeframe} Channel`}</div><span class="channel-badge">${context.status}</span><div class="channel-zone-value">Upper: ${fmtPrice(context.projectedLevels?.upper)}<br>Mid: ${fmtPrice(context.projectedLevels?.mid)}<br>Lower: ${fmtPrice(context.projectedLevels?.lower)}</div><div class="channel-note">${context.summary}</div></article>`;
+  }).join('')}</div>`;
+}
+
+function renderChannelTab() {
+  const activeTf = getActiveTimeframe();
+  const context = channelContexts[activeTf] ?? createEmptyChannelContext(activeTf);
+  if (!context.available) return `<div class="summary-box card">${context.summary}</div>${renderMtfChannelCards()}`;
+  return `<div class="channel-card-grid">${[
+    ["Active Channel", `TF: ${activeTf}<br>Direction: ${context.direction}<br>Status: ${context.status}<br>Position: ${context.position}<br>Width: ${formatDistance(context.widthPct)}<br>Slope: ${slopeLabel(context)}`],
+    ["Upper Boundary", channelBoundaryDetail(context, "upper")],
+    ["Midline", channelBoundaryDetail(context, "mid")],
+    ["Lower Boundary", channelBoundaryDetail(context, "lower")]
+  ].map(([title, body]) => `<article class="channel-card"><div class="card-label">${title}</div><div class="channel-zone-value">${body}</div></article>`).join('')}</div>${renderMtfChannelCards()}`;
+}
+
 function renderDetail() {
   const el = qs('#detail-content');
   const grid = (items, cls='detail-grid') => `<div class="${cls}">${items.map(([a,b]) => card(a,b)).join('')}</div>`;
@@ -179,7 +222,7 @@ function renderDetail() {
   const latest = getGlobalLatestPrice();
   const data = {
     'Indicator': `<div class="selector-row">${['Volume','RSI','MACD','ATR','Volatility','Structure'].map(metric).join('')}</div>${grid([['Volume Status', last ? 'Loaded' : 'Waiting Data'],['Last Volume', fmtVolume(last?.volume)],['RSI','Placeholder'],['ATR','Placeholder'],['Volatility','Placeholder']], 'detail-grid six')}<div class="mini-chart"></div>`,
-    'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position','Placeholder'],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>${renderMarketZonesCards()}`,
+    'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position', (channelContexts[getActiveTimeframe()] ?? createEmptyChannelContext(getActiveTimeframe())).status],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>${renderMarketZonesCards()}`,
     'Scenario Plan': `<h2>Multi-Scenario Planning</h2><p class="subtitle">Read-only planning context • not financial advice or a direct trading signal.</p><div class="chip-row">${['Bullish 8/10','Breakout 6/10','Wait 5/10','Bearish 4/10','Breakdown 2/10'].map((x,i)=>`<span class="chip ${i===0?'active':''}">${x}</span>`).join('')}</div><article class="card"><h2>Top Scenario: Bullish — 8/10</h2><div class="scenario-card">${[['Latest BTC Price',fmtPrice(latest.price)],['Watch Area','103,800 – 104,500'],['SL / Invalid','101,200'],['TP1','106,800'],['TP2','110,200'],['TP3','114,500'],['RR','1.2R / 2.4R / 3.6R'],['Status','Waiting Confirmation']].map(([a,b])=>`<div><span class="card-label">${a}</span><div class="card-value">${b}</div></div>`).join('')}</div></article>${grid([['Reason','Weekly HH-HL valid'],['Reason','4H bullish FVG active'],['Reason','Near support/channel'],['Risk','Invalid if close below SL']])}`,
     'Structure': (() => {
       const context = structureContexts[getActiveTimeframe()] ?? createEmptyStructureContext(getActiveTimeframe());
@@ -187,7 +230,7 @@ function renderDetail() {
     })(),
     'FVG': renderFvgTab(),
     'S/R': renderSrTab(),
-    'Channel': grid([['Weekly Channel','Direction: Pending<br>Position: Pending<br>Upper: —<br>Mid: —<br>Lower: —'],['Daily Channel','Direction: Pending<br>Status: No clear breakout'],['4H Channel','Direction: Pending<br>Position: Pending<br>Status: Pending']]),
+    'Channel': renderChannelTab(),
     'Confluence': grid([['Zone 1 — Strong','Area: Pending<br>Sources: Pending<br>Score: —'],['Zone 2 — Moderate','Area: Pending<br>Sources: Pending<br>Score: —'],['Zone 3 — Risk Area','Area: Pending<br>Sources: Pending<br>Score: —']]),
     'Reaction Study': `<div class="selector-row">${['Event Type','Outcome Window','Target %','Range Basis'].map(metric).join('')}</div>${grid([['Total Events','Pending'],['Success Rate','Pending'],['Failed','Pending'],['Avg Upside','Pending'],['Avg Drawdown','Pending'],['Median Reaction','Pending']], 'detail-grid six')}`,
     'Table': renderTable()
@@ -220,5 +263,7 @@ window.BtcDash.ui = {
   renderFvgTab,
   renderMtfStructureCards,
   renderMtfSrCards,
-  renderMtfFvgCards
+  renderMtfFvgCards,
+  renderChannelTab,
+  renderMtfChannelCards
 };

@@ -184,6 +184,158 @@ function zoneToMarketRow(zone, side, timeframe, currentPrice) {
   return { id: zone.id, side, zoneType: zone.type, timeframe, label: `${timeframe} ${zone.type === "support" ? "Support" : "Resistance"}`, lower: zone.lower, upper: zone.upper, midpoint: zone.midpoint, distancePct: distanceToZonePct(zone, currentPrice), strengthScore: zone.strengthScore, status: zone.status, source: zone.source, note: timeframe === "1W" || timeframe === "1D" ? "HTF context nearby" : "S/R only for now" };
 }
 
+
+function createEmptyChannelContext(timeframe, reason = "No clear channel detected") {
+  return {
+    available: false,
+    timeframe,
+    status: "No Clear Channel",
+    direction: "Unclear",
+    upperLine: null,
+    lowerLine: null,
+    midLine: null,
+    anchors: { highs: [], lows: [] },
+    widthPct: null,
+    slope: null,
+    position: "Unavailable",
+    projectedLevels: null,
+    summary: reason
+  };
+}
+
+function makeChannelLine(anchorA, anchorB, source) {
+  if (!anchorA || !anchorB || anchorA.time === anchorB.time) return null;
+  const [start, end] = anchorA.time < anchorB.time ? [anchorA, anchorB] : [anchorB, anchorA];
+  return {
+    startTime: start.time,
+    startPrice: start.price,
+    endTime: end.time,
+    endPrice: end.price,
+    slope: (end.price - start.price) / (end.time - start.time),
+    source
+  };
+}
+
+function projectLineAtTime(line, time) {
+  if (!line || !Number.isFinite(Number(time))) return null;
+  return line.startPrice + line.slope * (Number(time) - line.startTime);
+}
+
+function projectChannelAtTime(channel, time) {
+  const upper = projectLineAtTime(channel?.upperLine, time);
+  const lower = projectLineAtTime(channel?.lowerLine, time);
+  if (!Number.isFinite(upper) || !Number.isFinite(lower)) return null;
+  return { upper, lower, mid: (upper + lower) / 2 };
+}
+
+function buildChannelFromSwings(timeframe) {
+  const structure = structureContexts[timeframe];
+  const config = CHANNEL_CONFIG[timeframe];
+  if (!structure?.available || !config) return null;
+  const recent = structure.labels.slice(-config.maxLookbackSwings);
+  const highs = recent.filter((swing) => swing.type === "high").slice(-config.minSwingPairs);
+  const lows = recent.filter((swing) => swing.type === "low").slice(-config.minSwingPairs);
+  if (highs.length < config.minSwingPairs || lows.length < config.minSwingPairs) return null;
+  const upperLine = makeChannelLine(highs.at(-2), highs.at(-1), "swing-highs");
+  const lowerLine = makeChannelLine(lows.at(-2), lows.at(-1), "swing-lows");
+  if (!upperLine || !lowerLine) return null;
+  const startTime = Math.max(Math.min(upperLine.startTime, upperLine.endTime), Math.min(lowerLine.startTime, lowerLine.endTime));
+  const endTime = Math.max(upperLine.endTime, lowerLine.endTime);
+  const startLevels = projectChannelAtTime({ upperLine, lowerLine }, startTime);
+  const endLevels = projectChannelAtTime({ upperLine, lowerLine }, endTime);
+  if (!startLevels || !endLevels || startLevels.upper <= startLevels.lower || endLevels.upper <= endLevels.lower) return null;
+  const midLine = {
+    startTime,
+    startPrice: startLevels.mid,
+    endTime,
+    endPrice: endLevels.mid,
+    slope: (endLevels.mid - startLevels.mid) / (endTime - startTime || 1),
+    source: "channel-midline"
+  };
+  return { timeframe, upperLine, lowerLine, midLine, anchors: { highs, lows }, slope: (upperLine.slope + lowerLine.slope) / 2 };
+}
+
+function validateChannel(channel, candles, timeframe) {
+  const config = CHANNEL_CONFIG[timeframe];
+  const last = candles.at(-1);
+  if (!channel || !last || !config) return null;
+  const projected = projectChannelAtTime(channel, last.open_time);
+  if (!projected || projected.upper <= projected.lower) return null;
+  const widthPct = ((projected.upper - projected.lower) / projected.mid) * 100;
+  if (!Number.isFinite(widthPct) || widthPct < config.minWidthPct || widthPct > config.maxWidthPct) return null;
+  const newestAnchorIndex = Math.max(...[...channel.anchors.highs, ...channel.anchors.lows].map((swing) => swing.index ?? 0));
+  if (candles.length - newestAnchorIndex > config.maxChannelAgeCandles) return null;
+  const outsidePct = last.close > projected.upper ? ((last.close - projected.upper) / projected.mid) * 100 : last.close < projected.lower ? ((projected.lower - last.close) / projected.mid) * 100 : 0;
+  if (outsidePct > widthPct) return null;
+  return { ...channel, widthPct };
+}
+
+function deriveChannelStatus(channel, candles, timeframe) {
+  const config = CHANNEL_CONFIG[timeframe];
+  const last = candles.at(-1);
+  const previous = candles.at(-2);
+  const levels = projectChannelAtTime(channel, last.open_time);
+  const previousLevels = previous ? projectChannelAtTime(channel, previous.open_time) : null;
+  if (!last || !levels) return { status: "No Clear Channel", direction: "Unclear", position: "Unavailable", summary: "No clear channel detected" };
+  const direction = channel.slope > 0 ? "Up" : channel.slope < 0 ? "Down" : "Sideways";
+  const upperBreak = levels.upper * (1 + config.breakConfirmPct / 100);
+  const lowerBreak = levels.lower * (1 - config.breakConfirmPct / 100);
+  const upperDistance = Math.abs(levels.upper - last.close) / levels.mid * 100;
+  const lowerDistance = Math.abs(last.close - levels.lower) / levels.mid * 100;
+  const midDistance = Math.abs(last.close - levels.mid) / levels.mid * 100;
+  const wasBrokenUp = previous && previousLevels && previous.close > previousLevels.upper * (1 + config.breakConfirmPct / 100);
+  const wasBrokenDown = previous && previousLevels && previous.close < previousLevels.lower * (1 - config.breakConfirmPct / 100);
+  let status = "Inside Channel";
+  let position = "Inside";
+  if (last.close > upperBreak) { status = "Broken Up"; position = "Above Upper"; }
+  else if (last.close < lowerBreak) { status = "Broken Down"; position = "Below Lower"; }
+  else if (wasBrokenUp && last.close <= levels.upper && last.close >= levels.lower) { status = "Reclaimed"; position = "Back Inside"; }
+  else if (wasBrokenDown && last.close <= levels.upper && last.close >= levels.lower) { status = "Reclaimed"; position = "Back Inside"; }
+  else if (wasBrokenUp && upperDistance <= config.touchTolerancePct) { status = "Retesting Upper"; position = "Upper Retest"; }
+  else if (wasBrokenDown && lowerDistance <= config.touchTolerancePct) { status = "Retesting Lower"; position = "Lower Retest"; }
+  else if (upperDistance <= config.touchTolerancePct) { status = "Near Upper"; position = "Near Upper"; }
+  else if (lowerDistance <= config.touchTolerancePct) { status = "Near Lower"; position = "Near Lower"; }
+  else if (midDistance <= config.touchTolerancePct) { status = "Near Midline"; position = "Near Midline"; }
+  return { status, direction, position, summary: `${CHANNEL_CONFIG[timeframe].label}: ${status} (${direction}).` };
+}
+
+function buildChannelContext(timeframe) {
+  const candles = marketData[timeframe] || [];
+  const structure = structureContexts[timeframe];
+  if (!structure?.available) return createEmptyChannelContext(timeframe, "Structure not available");
+  const rawChannel = buildChannelFromSwings(timeframe);
+  if (!rawChannel) return createEmptyChannelContext(timeframe, "No valid channel anchors");
+  const validChannel = validateChannel(rawChannel, candles, timeframe);
+  if (!validChannel) return createEmptyChannelContext(timeframe, "No valid channel from swings");
+  const statusInfo = deriveChannelStatus(validChannel, candles, timeframe);
+  const lastCandle = candles.at(-1);
+  const projectedLevels = projectChannelAtTime(validChannel, lastCandle.open_time || lastCandle.time);
+  const context = { available: true, timeframe, status: statusInfo.status, direction: statusInfo.direction, upperLine: validChannel.upperLine, lowerLine: validChannel.lowerLine, midLine: validChannel.midLine, anchors: validChannel.anchors, widthPct: validChannel.widthPct, slope: validChannel.slope, position: statusInfo.position, projectedLevels, summary: statusInfo.summary };
+  console.info("[Channel Context]", timeframe, { available: context.available, status: context.status, direction: context.direction, widthPct: context.widthPct, projectedLevels });
+  return context;
+}
+
+function rebuildAllChannelContexts() {
+  ["1W", "1D", "4H", "1H"].forEach((timeframe) => { channelContexts[timeframe] = buildChannelContext(timeframe); });
+  console.info("[Channel Contexts]", channelContexts);
+}
+
+function getProjectedChannelContextsForActiveTimeframe(activeTimeframe) {
+  const mapping = activeTimeframe === "1W" ? ["1W"] : activeTimeframe === "4H" ? ["1W", "1D", "4H"] : activeTimeframe === "1H" ? ["1W", "1D", "4H", "1H"] : [activeTimeframe];
+  return mapping.map((timeframe) => ({ timeframe, context: channelContexts[timeframe], isLocal: timeframe === activeTimeframe })).filter((item) => item.context?.available);
+}
+
+function channelBoundaryToMarketRow(context, boundary, activeTimeframe, currentPrice) {
+  if (!context?.projectedLevels?.[boundary]) return null;
+  const price = context.projectedLevels[boundary];
+  const padPct = context.timeframe === "1W" ? 0.35 : context.timeframe === "1D" ? 0.22 : 0.12;
+  const lower = price * (1 - padPct / 100);
+  const upper = price * (1 + padPct / 100);
+  const side = price >= currentPrice ? "upside" : "downside";
+  const labelName = boundary === "upper" ? "Channel Upper" : boundary === "lower" ? "Channel Lower" : "Channel Midline";
+  return { id: `${context.timeframe}-channel-${boundary}`, side, zoneType: "channel", timeframe: context.timeframe, label: `${context.timeframe} ${labelName}`, lower, upper, midpoint: price, distancePct: distanceToZonePct({ lower, upper }, currentPrice), strengthScore: context.timeframe === activeTimeframe ? 7 : 5, status: context.status, source: CHANNEL_CONFIG[context.timeframe]?.label ?? "Channel", note: context.timeframe === activeTimeframe ? "Local channel boundary" : `${context.timeframe} HTF channel boundary` };
+}
+
 function buildMarketZonesContext(activeTimeframe) {
   const currentPrice = marketData[activeTimeframe]?.at(-1)?.close;
   if (!currentPrice) return { upside: [], downside: [], nearestSupport: null, nearestResistance: null, activeTimeframe, summary: "No clear support/resistance detected" };
@@ -204,9 +356,15 @@ function buildMarketZonesContext(activeTimeframe) {
       });
     }
   });
+  getProjectedChannelContextsForActiveTimeframe(activeTimeframe).forEach(({ context }) => {
+    ["upper", "mid", "lower"].forEach((boundary) => {
+      const row = channelBoundaryToMarketRow(context, boundary, activeTimeframe, currentPrice);
+      if (row) rows.push(row);
+    });
+  });
   const upside = rows.filter((row) => row.side === "upside").sort((a, b) => a.distancePct - b.distancePct).slice(0, 3);
   const downside = rows.filter((row) => row.side === "downside").sort((a, b) => a.distancePct - b.distancePct).slice(0, 3);
-  return { upside, downside, nearestSupport: downside[0] ?? null, nearestResistance: upside[0] ?? null, activeTimeframe, summary: "S/R only for now. FVG and channel will be added in later patches." };
+  return { upside, downside, nearestSupport: downside[0] ?? null, nearestResistance: upside[0] ?? null, activeTimeframe, summary: "S/R + FVG + Channel. Confluence scoring will be added later." };
 }
 
 function rebuildAllSrContexts() {
@@ -311,5 +469,14 @@ window.BtcDash.analysis = {
   scanFvgForTimeframe,
   buildFvgContext,
   deriveDaily4hFvgConfluence,
-  rebuildAllFvgContexts
+  rebuildAllFvgContexts,
+  createEmptyChannelContext,
+  buildChannelFromSwings,
+  projectLineAtTime,
+  projectChannelAtTime,
+  validateChannel,
+  deriveChannelStatus,
+  buildChannelContext,
+  rebuildAllChannelContexts,
+  getProjectedChannelContextsForActiveTimeframe
 };

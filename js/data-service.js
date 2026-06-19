@@ -88,6 +88,7 @@ async function loadAllRepoData({ runAutoUpdate = autoUpdateEnabled } = {}) {
     rebuildAllStructureContexts();
     rebuildAllSrContexts();
     rebuildAllFvgContexts();
+    rebuildAllChannelContexts();
     marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
     dataStatusMessage = cachedData ? "Repo data loaded and merged with local cache." : "Repo data loaded.";
     loading = false;
@@ -232,6 +233,7 @@ async function autoUpdateFromBinance() {
   rebuildAllStructureContexts();
   rebuildAllSrContexts();
   rebuildAllFvgContexts();
+  rebuildAllChannelContexts();
   marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
   const entries = Object.entries(updateSummary);
   const successEntries = entries.filter(([, result]) => !result.error);
