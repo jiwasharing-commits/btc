@@ -24,6 +24,16 @@ const workspaceConfig = {
   "1H Timing": { timeframe: "1H", title: "1H Timing Chart", ranges: ["7D", "14D", "1M", "3M"], defaultRange: "14D", strip: ["Weekly Bias", "Daily Context", "4H Setup", "Nearest Confluence"] }
 };
 const BINANCE_INTERVALS = { "1W": "1w", "1D": "1d", "4H": "4h", "1H": "1h" };
+const BINANCE_INTERVAL_MS = { "1W": 7 * 24 * 60 * 60 * 1000, "1D": 24 * 60 * 60 * 1000, "4H": 4 * 60 * 60 * 1000, "1H": 60 * 60 * 1000 };
+const BINANCE_BASE_URLS = [
+  "https://data-api.binance.vision",
+  "https://api.binance.com",
+  "https://api-gcp.binance.com",
+  "https://api1.binance.com",
+  "https://api2.binance.com",
+  "https://api3.binance.com",
+  "https://api4.binance.com"
+];
 const BINANCE_SYMBOL = "BTCUSDT";
 const DATA_CACHE_KEY = "btcPatternDashboard.marketData.v1";
 const RUNNING_CACHE_KEY = "btcPatternDashboard.runningCandles.v1";
@@ -39,6 +49,7 @@ let loadError = "";
 let dataStatusMessage = "Loading repo data...";
 let cacheMeta = null;
 let autoUpdateEnabled = localStorage.getItem(AUTO_UPDATE_KEY) !== "false";
+let binanceDebug = {};
 let tradingChart = null;
 let candleSeries = null;
 let resizeObserver = null;
@@ -121,11 +132,11 @@ function applyRepoAndCache(repoData, cachedData) {
   });
 }
 
-function saveCacheData() {
+function saveCacheData(updateSummary = null) {
   try {
     localStorage.setItem(DATA_CACHE_KEY, JSON.stringify(marketData));
     localStorage.setItem(RUNNING_CACHE_KEY, JSON.stringify(runningCandles));
-    cacheMeta = { source: "repo_plus_binance_runtime_merge", updated_at: new Date().toISOString() };
+    cacheMeta = { source: "repo_plus_binance_runtime_merge", updated_at: new Date().toISOString(), updateSummary };
     localStorage.setItem(CACHE_META_KEY, JSON.stringify(cacheMeta));
   } catch (error) {
     dataStatusMessage = "Cache save failed. Data is still available for this session.";
@@ -181,27 +192,63 @@ function binanceRowToCandle(row) {
   };
 }
 
-async function fetchMissingBinanceCandles(timeframe) {
-  const last = marketData[timeframe]?.at(-1);
-  if (!last) return [];
-  let startTime = Number(last.close_time ?? last.open_time) + 1;
+async function fetchBinanceKlinesWithFallback(timeframe, startTime, endTime) {
   const interval = BINANCE_INTERVALS[timeframe];
-  const allRows = [];
+  const errors = [];
 
-  while (startTime && interval) {
-    const params = new URLSearchParams({ symbol: BINANCE_SYMBOL, interval, startTime: String(startTime), limit: "1000" });
-    const response = await fetch(`https://api.binance.com/api/v3/klines?${params.toString()}`);
-    if (!response.ok) throw new Error(`Binance ${timeframe} fetch failed (${response.status})`);
-    const rows = await response.json();
-    if (!Array.isArray(rows) || !rows.length) break;
-    allRows.push(...rows);
-    if (rows.length < 1000) break;
-    const nextStart = Number(rows.at(-1)?.[6]) + 1;
-    if (!Number.isFinite(nextStart) || nextStart <= startTime) break;
-    startTime = nextStart;
+  for (const baseUrl of BINANCE_BASE_URLS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    try {
+      const params = new URLSearchParams({ symbol: BINANCE_SYMBOL, interval, startTime: String(startTime), limit: "1000" });
+      if (endTime) params.set("endTime", String(endTime));
+      const response = await fetch(`${baseUrl}/api/v3/klines?${params.toString()}`, { signal: controller.signal });
+      const bodyText = await response.text();
+      if (!response.ok) {
+        let reason = bodyText;
+        try { reason = JSON.parse(bodyText).msg ?? bodyText; } catch (error) {}
+        throw new Error(`${response.status} ${reason}`.trim());
+      }
+      const rows = JSON.parse(bodyText);
+      if (!Array.isArray(rows)) throw new Error("Unexpected Binance response");
+      return { rows, endpoint: baseUrl };
+    } catch (error) {
+      const reason = error.name === "AbortError" ? "timeout after 10s" : error.message;
+      errors.push(`${baseUrl}: ${reason}`);
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
-  return allRows.map(binanceRowToCandle);
+  throw new Error(`${timeframe} Binance failed on all endpoints: ${errors.join(" / ")}`);
+}
+
+async function fetchMissingBinanceCandles(timeframe) {
+  const last = marketData[timeframe]?.at(-1);
+  if (!last) return { candles: [], fetchedRows: 0, endpoint: "—", requestStartTime: null, lastLocalClose: null };
+
+  const intervalMs = BINANCE_INTERVAL_MS[timeframe];
+  let startTime = Number(last.close_time ?? last.open_time) + 1;
+  const requestStartTime = startTime;
+  const allCandles = [];
+  let fetchedRows = 0;
+  let endpoint = "—";
+  let guard = 0;
+
+  while (startTime <= Date.now() && guard < 25) {
+    guard += 1;
+    const { rows, endpoint: endpointUsed } = await fetchBinanceKlinesWithFallback(timeframe, startTime);
+    endpoint = endpointUsed;
+    fetchedRows += rows.length;
+    if (!rows.length) break;
+    allCandles.push(...rows.map(binanceRowToCandle));
+    const lastOpenTime = Number(rows.at(-1)?.[0]);
+    const nextStartTime = lastOpenTime + intervalMs;
+    if (rows.length < 1000 || !Number.isFinite(nextStartTime) || nextStartTime <= startTime) break;
+    startTime = nextStartTime;
+  }
+
+  return { candles: allCandles, fetchedRows, endpoint, requestStartTime, lastLocalClose: last.close_time ?? last.open_time };
 }
 
 function splitClosedAndRunning(candles) {
@@ -209,32 +256,65 @@ function splitClosedAndRunning(candles) {
   const closed = [];
   let running = null;
   candles.forEach((candle) => {
-    if (Number(candle.close_time) > now) running = candle;
-    else closed.push(candle);
+    if (Number(candle.close_time) <= now) closed.push(candle);
+    else running = candle;
   });
   return { closed, running };
+}
+
+async function updateSingleTimeframeFromBinance(timeframe) {
+  const result = await fetchMissingBinanceCandles(timeframe);
+  const { closed, running } = splitClosedAndRunning(result.candles);
+  const beforeCount = marketData[timeframe].length;
+  marketData[timeframe] = mergeCandles(marketData[timeframe], closed);
+  const addedClosed = marketData[timeframe].length - beforeCount;
+  runningCandles[timeframe] = running;
+
+  const debug = {
+    lastLocalClose: result.lastLocalClose,
+    requestStartTime: result.requestStartTime,
+    fetchedRows: result.fetchedRows,
+    addedClosed,
+    running: Boolean(running),
+    endpoint: result.endpoint
+  };
+  binanceDebug[timeframe] = debug;
+  console.info("[Binance Update]", timeframe, debug);
+  return debug;
 }
 
 async function autoUpdateFromBinance() {
   dataStatusMessage = "Auto updating from Binance...";
   renderDataStatus();
-  const counts = {};
-  try {
-    for (const timeframe of Object.keys(BINANCE_INTERVALS)) {
-      const fetched = await fetchMissingBinanceCandles(timeframe);
-      const { closed, running } = splitClosedAndRunning(fetched);
-      counts[timeframe] = closed.length;
-      marketData[timeframe] = mergeCandles(marketData[timeframe], closed);
-      runningCandles[timeframe] = running;
-      renderAll();
+  renderBinanceDebug();
+  const updateSummary = {};
+
+  for (const timeframe of ["1W", "1D", "4H", "1H"]) {
+    try {
+      updateSummary[timeframe] = await updateSingleTimeframeFromBinance(timeframe);
+    } catch (error) {
+      updateSummary[timeframe] = { error: error.message };
+      binanceDebug[timeframe] = { error: error.message };
+      console.info("[Binance Update]", timeframe, { error: error.message });
     }
-    saveCacheData();
-    dataStatusMessage = `Binance update complete: 1W ${counts["1W"] ?? 0} new, 1D ${counts["1D"] ?? 0} new, 4H ${counts["4H"] ?? 0} new, 1H ${counts["1H"] ?? 0} new`;
-  } catch (error) {
-    dataStatusMessage = "Binance update failed. Existing repo/cache data is still available.";
-  } finally {
     renderAll();
   }
+
+  const entries = Object.entries(updateSummary);
+  const successEntries = entries.filter(([, result]) => !result.error);
+  const totalAdded = successEntries.reduce((sum, [, result]) => sum + (result.addedClosed ?? 0), 0);
+
+  if (successEntries.length) {
+    saveCacheData(updateSummary);
+    dataStatusMessage = totalAdded
+      ? `Binance update finished: 1W ${updateSummary["1W"]?.addedClosed ?? 0} new, 1D ${updateSummary["1D"]?.addedClosed ?? 0} new, 4H ${updateSummary["4H"]?.addedClosed ?? 0} new, 1H ${updateSummary["1H"]?.addedClosed ?? 0} new`
+      : "Binance update finished: no new closed candles";
+  } else {
+    const reason = entries.map(([tf, result]) => `${tf}: ${result.error}`).join(" | ");
+    dataStatusMessage = `Binance update failed. Existing repo/cache data is still available. Reason: ${reason}`;
+  }
+
+  renderAll();
 }
 
 function getVisibleCandles(timeframe, range) {
@@ -272,6 +352,18 @@ function renderDataStatus() {
   `;
   qs('#auto-update').textContent = `Auto Update: ${autoUpdateEnabled ? "ON" : "OFF"}`;
   qs('#auto-update').classList.toggle('active', autoUpdateEnabled);
+}
+
+function renderBinanceDebug() {
+  const el = qs('#binance-debug');
+  if (!el) return;
+  const rows = ["1W", "1D", "4H", "1H"].map((timeframe) => {
+    const debug = binanceDebug[timeframe];
+    if (!debug) return `<div><strong>${timeframe}:</strong> waiting</div>`;
+    if (debug.error) return `<div><strong>${timeframe}:</strong> failed — ${debug.error}</div>`;
+    return `<div><strong>${timeframe}:</strong> last local close: ${debug.lastLocalClose ? new Date(debug.lastLocalClose).toLocaleString() : "—"} | fetched: ${debug.fetchedRows ?? 0} | added closed: ${debug.addedClosed ?? 0} | running: ${debug.running ? "yes" : "no"} | endpoint: ${debug.endpoint ?? "—"}</div>`;
+  }).join('');
+  el.innerHTML = `<div class="debug-title">Binance Debug</div>${rows}`;
 }
 
 function renderSummary() {
@@ -498,6 +590,7 @@ function renderAll() {
   renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace');
   renderTabs('.detail-tabs', details, activeDetail, 'setDetail');
   renderDataStatus();
+  renderBinanceDebug();
   renderSummary();
   renderWorkspace();
   renderDetail();
