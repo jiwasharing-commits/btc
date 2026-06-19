@@ -23,12 +23,12 @@ function chart(title, timeframe, closedCandles, strip = []) {
     <div class="chart-title"><h2>${title}</h2><p>Candles loaded: ${countLabel} • Visible closed: ${closedCandles.length} • Active TF last closed: ${fmtPrice(lastClosed?.close)}${runningLabel}</p></div>
     <div id="main-chart" class="trading-chart" aria-label="TradingView-style candlestick chart"></div>
     <div class="running-overlay ${hasRunningPreview ? '' : 'is-hidden'}"><span>Running Preview<br><small>Preview Only</small></span></div>
-    <div class="fvg-overlay ${activeLayers.FVG ? '' : 'is-hidden'}"><span>FVG Zone</span></div>
     <div class="chart-watermark">${timeframe} • BTCUSDT</div>
   </div>`;
 }
 
 function clearTradingChart() {
+  qs('#main-chart')?.querySelectorAll('.fvg-zone-box').forEach((node) => node.remove());
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
@@ -50,7 +50,7 @@ function addDummyPriceLines(closedCandles, running) {
     lineWidth: 1,
     lineStyle: LightweightCharts.LineStyle.Dotted,
     axisLabelVisible: true,
-    title: "Last Closed"
+    title: ""
   });
 
   if (running && running.open_time > closedCandles.at(-1).open_time) {
@@ -60,38 +60,13 @@ function addDummyPriceLines(closedCandles, running) {
       lineWidth: 1,
       lineStyle: LightweightCharts.LineStyle.Dotted,
       axisLabelVisible: true,
-      title: "Running"
+      title: "Run"
     });
   }
 
   const timeframe = getActiveTimeframe();
   if (activeLayers["S/R"]) {
-    const sr = srContexts[timeframe];
-    if (sr?.available) {
-      sr.supportZones.slice(0, 3).forEach((zone, index) => {
-        candleSeries.createPriceLine({ price: zone.upper, color: "#22c55e", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: index === 0 ? "Support" : "S" });
-        candleSeries.createPriceLine({ price: zone.lower, color: "rgba(34, 197, 94, .55)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
-      });
-      sr.resistanceZones.slice(0, 3).forEach((zone, index) => {
-        candleSeries.createPriceLine({ price: zone.lower, color: "#f97316", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: index === 0 ? "Resistance" : "R" });
-        candleSeries.createPriceLine({ price: zone.upper, color: "rgba(249, 115, 22, .55)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
-      });
-    }
-  }
-  if (activeLayers.FVG) {
-    const fvg = fvgContexts[timeframe];
-    fvg?.activeFvgs?.slice(0, 3).forEach((zone, index) => {
-      const color = zone.type === "bullish" ? "#14b8a6" : "#fb7185";
-      candleSeries.createPriceLine({ price: zone.upper, color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: index === 0, title: index === 0 ? `${timeframe} FVG` : "" });
-      candleSeries.createPriceLine({ price: zone.lower, color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
-    });
-    if (activeWorkspace === "Daily + 4H Setup") {
-      const dailyFvg = fvgContexts["1D"]?.activeFvgs?.[0];
-      if (dailyFvg) {
-        candleSeries.createPriceLine({ price: dailyFvg.upper, color: "rgba(20, 184, 166, .55)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "Daily FVG" });
-        candleSeries.createPriceLine({ price: dailyFvg.lower, color: "rgba(20, 184, 166, .35)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
-      }
-    }
+    addSrSegmentOverlays(closedCandles, timeframe);
   }
 
   if (activeLayers.Confluence) {
@@ -113,6 +88,63 @@ function addScenarioLevelPriceLines() {
   candleSeries.createPriceLine({ price: riskPlan.invalidation.level, color: "rgba(248, 113, 113, .78)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: "Invalidation Ref" });
   riskPlan.targets.slice(0, 3).forEach((target, index) => {
     candleSeries.createPriceLine({ price: target.level, color: "rgba(125, 211, 252, .68)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: `TP${index + 1} Ref` });
+  });
+}
+
+function addLimitedSegment(candles, price, color, title, lineStyle = LightweightCharts.LineStyle.Dashed) {
+  if (!tradingChart || candles.length < 2 || !Number.isFinite(Number(price))) return;
+  const startIndex = Math.max(0, candles.length - Math.max(16, Math.round(candles.length * 0.28)));
+  const start = candles[startIndex].open_time;
+  const interval = candles.at(-1).open_time - candles.at(-2).open_time || 3600000;
+  const end = candles.at(-1).open_time + interval * 10;
+  const series = tradingChart.addLineSeries({ color, lineWidth: 1, lineStyle, priceLineVisible: false, lastValueVisible: true, title });
+  series.setData([{ time: Math.floor(start / 1000), value: price }, { time: Math.floor(end / 1000), value: price }]);
+  channelSeries.push(series);
+}
+
+function addSrSegmentOverlays(candles, timeframe) {
+  const sr = srContexts[timeframe];
+  if (!sr?.available) return;
+  [sr.nearestSupport, sr.strongestSupport].filter(Boolean).slice(0, 2).forEach((zone) => {
+    addLimitedSegment(candles, zone.upper, "rgba(34, 197, 94, .82)", "S", LightweightCharts.LineStyle.Dashed);
+    addLimitedSegment(candles, zone.lower, "rgba(34, 197, 94, .42)", "", LightweightCharts.LineStyle.Dotted);
+  });
+  [sr.nearestResistance, sr.strongestResistance].filter(Boolean).slice(0, 2).forEach((zone) => {
+    addLimitedSegment(candles, zone.lower, "rgba(249, 115, 22, .86)", "R", LightweightCharts.LineStyle.Dashed);
+    addLimitedSegment(candles, zone.upper, "rgba(249, 115, 22, .42)", "", LightweightCharts.LineStyle.Dotted);
+  });
+}
+
+function fvgLabel(timeframe, zone) {
+  const prefix = timeframe === "1W" ? "W" : timeframe === "1D" ? "D" : timeframe;
+  const side = zone.type === "bullish" ? "Bull" : zone.type === "bearish" ? "Bear" : "Inv";
+  return `${prefix} ${side} FVG`;
+}
+
+function addFvgZoneBoxes(candles, timeframe) {
+  const container = qs('#main-chart');
+  container?.querySelectorAll('.fvg-zone-box').forEach((node) => node.remove());
+  if (!tradingChart || !candleSeries || !activeLayers.FVG || candles.length < 2 || !container) return;
+  const zones = (fvgContexts[timeframe]?.activeFvgs || []).slice(0, 3).map((zone) => ({ zone, timeframe, isHtf: false }));
+  if (activeWorkspace === "Daily + 4H Setup" && fvgContexts["1D"]?.activeFvgs?.[0]) {
+    zones.push({ zone: fvgContexts["1D"].activeFvgs[0], timeframe: "1D", isHtf: true });
+  }
+  const startCandle = candles[Math.max(0, candles.length - 28)];
+  const firstX = tradingChart.timeScale().timeToCoordinate(Math.floor(startCandle.open_time / 1000));
+  const lastX = tradingChart.timeScale().timeToCoordinate(Math.floor(candles.at(-1).open_time / 1000));
+  if (!Number.isFinite(firstX) || !Number.isFinite(lastX)) return;
+  zones.forEach(({ zone, timeframe: zoneTf, isHtf }, index) => {
+    const top = candleSeries.priceToCoordinate(zone.upper);
+    const bottom = candleSeries.priceToCoordinate(zone.lower);
+    if (!Number.isFinite(top) || !Number.isFinite(bottom)) return;
+    const box = document.createElement('div');
+    box.className = `fvg-zone-box ${zone.type === "bullish" ? "bullish" : "bearish"} ${zone.status === "Partially Filled" ? "partial" : ""} ${isHtf ? "htf" : ""}`;
+    box.style.left = `${Math.max(0, firstX + index * 10)}px`;
+    box.style.width = `${Math.max(82, lastX - firstX + 72 - index * 8)}px`;
+    box.style.top = `${Math.min(top, bottom)}px`;
+    box.style.height = `${Math.max(16, Math.abs(bottom - top))}px`;
+    box.innerHTML = `<span>${fvgLabel(zoneTf, zone)}</span>`;
+    container.appendChild(box);
   });
 }
 
@@ -216,10 +248,12 @@ function renderTradingChart() {
   addDummyMarkers(closedCandles, running, timeframe);
   addChannelOverlays(closedCandles, timeframe);
   tradingChart.timeScale().fitContent();
+  requestAnimationFrame(() => addFvgZoneBoxes(closedCandles, timeframe));
 
   resizeObserver = new ResizeObserver(() => {
     if (!tradingChart || !container.clientWidth || !container.clientHeight) return;
     tradingChart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+    requestAnimationFrame(() => addFvgZoneBoxes(closedCandles, timeframe));
   });
   resizeObserver.observe(container);
 }
@@ -231,6 +265,8 @@ window.BtcDash.chart = {
   clearTradingChart,
   addDummyPriceLines,
   addScenarioLevelPriceLines,
+  addSrSegmentOverlays,
+  addFvgZoneBoxes,
   addDummyMarkers,
   addChannelOverlays,
   renderTradingChart

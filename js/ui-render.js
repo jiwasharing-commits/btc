@@ -20,7 +20,7 @@ function renderDataStatus() {
 }
 
 function renderBinanceDebug() {
-  const el = qs('#binance-debug');
+  const el = qs('#binance-debug-modal-body') || qs('#binance-debug');
   if (!el) return;
   const rows = ["1W", "1D", "4H", "1H"].map((timeframe) => {
     const debug = binanceDebug[timeframe];
@@ -29,6 +29,12 @@ function renderBinanceDebug() {
     return `<div><strong>${timeframe}:</strong> last local close: ${debug.lastLocalClose ? new Date(debug.lastLocalClose).toLocaleString() : "—"} | fetched: ${debug.fetchedRows ?? 0} | added closed: ${debug.addedClosed ?? 0} | running: ${debug.running ? "yes" : "no"} | endpoint: ${debug.endpoint ?? "—"}</div>`;
   }).join('');
   el.innerHTML = `<div class="debug-title">Binance Debug</div>${rows}`;
+}
+
+function renderLayerControls() {
+  document.querySelectorAll('.layer-control [data-layer]').forEach((button) => {
+    button.classList.toggle('active', Boolean(activeLayers[button.dataset.layer]));
+  });
 }
 
 function getGlobalLatestPrice() {
@@ -348,6 +354,7 @@ function renderDetail() {
 function renderAll() {
   renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace');
   renderTabs('.detail-tabs', details, activeDetail, 'setDetail');
+  renderLayerControls();
   renderDataStatus();
   renderBinanceDebug();
   renderSummary();
@@ -360,6 +367,7 @@ window.BtcDash.ui = {
   renderTabs,
   renderDataStatus,
   renderBinanceDebug,
+  renderLayerControls,
   renderSummary,
   renderWorkspace,
   renderDetail,

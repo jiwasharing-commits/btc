@@ -22,7 +22,7 @@ let tradingChart = null;
 let candleSeries = null;
 let resizeObserver = null;
 let channelSeries = [];
-const activeLayers = { MA: true, Structure: true, FVG: true, "S/R": true, "EQH/EQL": false, Channel: true, Confluence: true, "Scenario Levels": false };
+const activeLayers = { MA: false, Structure: false, FVG: false, "S/R": false, "EQH/EQL": false, Channel: false, Confluence: false, "Scenario Levels": false };
 
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.state = {
