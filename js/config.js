@@ -66,6 +66,15 @@ const CHANNEL_CONFIG = {
   "1H": { minSwingPairs: 2, maxLookbackSwings: 48, maxChannelAgeCandles: 320, maxWidthPct: 10, minWidthPct: 1, touchTolerancePct: 0.55, breakConfirmPct: 0.25, label: "1H Timing Channel" }
 };
 
+const CONFLUENCE_CONFIG = {
+  proximityPct: { "1W": 3.0, "1D": 1.8, "4H": 1.0, "1H": 0.6 },
+  maxCandidates: 8,
+  minSourcesForStrong: 3,
+  minSourcesForCandidate: 2,
+  overlapBonusLabel: "Overlap",
+  proximityLabel: "Nearby"
+};
+
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.config = {
   DATA_FILES,
@@ -83,5 +92,6 @@ window.BtcDash.config = {
   STRUCTURE_CONFIG,
   SR_CONFIG,
   FVG_CONFIG,
-  CHANNEL_CONFIG
+  CHANNEL_CONFIG,
+  CONFLUENCE_CONFIG
 };

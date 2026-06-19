@@ -2,6 +2,7 @@
   function setWorkspace(name) {
     activeWorkspace = name;
     marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
+    rebuildConfluenceContext(getActiveTimeframe());
     renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace');
     renderSummary();
     renderWorkspace();
@@ -17,6 +18,7 @@
   function setRange(range) {
     rangeState[activeWorkspace] = range;
     marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
+    rebuildConfluenceContext(getActiveTimeframe());
     renderSummary();
     renderWorkspace();
     renderDetail();

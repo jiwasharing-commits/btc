@@ -445,6 +445,146 @@ function rebuildAllFvgContexts() {
   daily4hFvgConfluence = deriveDaily4hFvgConfluence();
 }
 
+
+function createEmptyConfluenceContext(reason = "No confluence candidate detected") {
+  return { available: false, activeTimeframe: null, candidates: [], strongestCandidate: null, upsideCandidates: [], downsideCandidates: [], mixedCandidates: [], summary: reason };
+}
+
+function normalizeZoneForConfluence(zone, sourceType, timeframe) {
+  if (!zone || zone.status === "Filled") return null;
+  const lower = Number(zone.lower);
+  const upper = Number(zone.upper);
+  const midpoint = Number(zone.midpoint || ((lower + upper) / 2));
+  if (!Number.isFinite(lower) || !Number.isFinite(upper) || !Number.isFinite(midpoint) || lower > upper) return null;
+  return {
+    id: zone.id || `${timeframe}-${sourceType}-${lower}-${upper}`,
+    sourceType,
+    timeframe,
+    label: zone.label || zone.zoneType || zone.type || sourceType,
+    side: zone.side || null,
+    zoneType: zone.zoneType || zone.type || sourceType,
+    type: zone.type || null,
+    lower,
+    upper,
+    midpoint,
+    status: zone.status || "active",
+    strengthScore: zone.strengthScore || null,
+    source: zone.source || sourceType,
+    note: zone.note || ""
+  };
+}
+
+function pushUniqueConfluenceZone(zones, zone) {
+  const normalized = zone;
+  if (!normalized || zones.some((item) => item.id === normalized.id && item.sourceType === normalized.sourceType)) return;
+  zones.push(normalized);
+}
+
+function collectConfluenceZones(activeTimeframe) {
+  const zones = [];
+  [...(marketZonesContext.upside || []), ...(marketZonesContext.downside || [])].forEach((zone) => pushUniqueConfluenceZone(zones, normalizeZoneForConfluence(zone, zone.zoneType || "market", zone.timeframe || activeTimeframe)));
+  ["1W", "1D", "4H", "1H"].forEach((timeframe) => {
+    const sr = srContexts[timeframe];
+    if (sr?.available) {
+      [sr.nearestSupport, sr.nearestResistance, sr.strongestSupport, sr.strongestResistance, ...(sr.supportZones || []).slice(0, 3), ...(sr.resistanceZones || []).slice(0, 3)].forEach((zone) => pushUniqueConfluenceZone(zones, normalizeZoneForConfluence(zone, "sr", timeframe)));
+    }
+    const fvg = fvgContexts[timeframe];
+    if (fvg?.available) {
+      [fvg.nearestFvg, fvg.nearestBullishFvg, fvg.nearestBearishFvg, ...(fvg.activeFvgs || []).slice(0, 4)].forEach((zone) => pushUniqueConfluenceZone(zones, normalizeZoneForConfluence(zone, "fvg", timeframe)));
+    }
+    const channel = channelContexts[timeframe];
+    if (channel?.available && channel.projectedLevels) {
+      ["upper", "mid", "lower"].forEach((boundary) => {
+        const price = channel.projectedLevels[boundary];
+        const padPct = boundary === "mid" ? 0.12 : 0.3;
+        const labelName = boundary === "upper" ? "Channel Upper" : boundary === "lower" ? "Channel Lower" : "Channel Midline";
+        pushUniqueConfluenceZone(zones, normalizeZoneForConfluence({ id: `${timeframe}-channel-${boundary}-confluence`, zoneType: "channel", label: `${timeframe} ${labelName}`, lower: price * (1 - padPct / 100), upper: price * (1 + padPct / 100), midpoint: price, status: channel.status, source: CHANNEL_CONFIG[timeframe]?.label, note: boundary === "mid" ? "Channel midline reaction" : "Channel boundary" }, "channel", timeframe));
+      });
+    }
+  });
+  return zones;
+}
+
+function zonesOverlapOrNear(a, b, activeTimeframe) {
+  const overlapLower = Math.max(a.lower, b.lower);
+  const overlapUpper = Math.min(a.upper, b.upper);
+  const hasOverlap = overlapLower <= overlapUpper;
+  const distancePct = Math.abs(a.midpoint - b.midpoint) / ((a.midpoint + b.midpoint) / 2) * 100;
+  const tolerance = CONFLUENCE_CONFIG.proximityPct[activeTimeframe] || 1;
+  return { matches: hasOverlap || distancePct <= tolerance, relation: hasOverlap ? CONFLUENCE_CONFIG.overlapBonusLabel : CONFLUENCE_CONFIG.proximityLabel, overlapLower: hasOverlap ? overlapLower : null, overlapUpper: hasOverlap ? overlapUpper : null, distancePct };
+}
+
+function zoneBiasType(zone) {
+  const label = `${zone.label} ${zone.zoneType} ${zone.type ?? ""}`.toLowerCase();
+  if (label.includes("support") || label.includes("bullish") || label.includes("lower")) return "support";
+  if (label.includes("resistance") || label.includes("bearish") || label.includes("upper")) return "resistance";
+  return "neutral";
+}
+
+function classifyConfluenceSide(zones, currentPrice) {
+  const midpoint = zones.reduce((sum, zone) => sum + zone.midpoint, 0) / zones.length;
+  const biasTypes = new Set(zones.map(zoneBiasType).filter((type) => type !== "neutral"));
+  if (biasTypes.has("support") && biasTypes.has("resistance")) return "mixed";
+  if (midpoint > currentPrice) return "upside";
+  if (midpoint < currentPrice) return "downside";
+  return "mixed";
+}
+
+function makeConfluenceCandidate(zones, relation, activeTimeframe, currentPrice) {
+  const uniqueZones = [...new Map(zones.map((zone) => [zone.id, zone])).values()];
+  if (uniqueZones.length < CONFLUENCE_CONFIG.minSourcesForCandidate) return null;
+  const lower = Math.min(...uniqueZones.map((zone) => zone.lower));
+  const upper = Math.max(...uniqueZones.map((zone) => zone.upper));
+  const midpoint = uniqueZones.reduce((sum, zone) => sum + zone.midpoint, 0) / uniqueZones.length;
+  const side = classifyConfluenceSide(uniqueZones, currentPrice);
+  const sourceTypes = [...new Set(uniqueZones.map((zone) => zone.sourceType))];
+  const timeframes = [...new Set(uniqueZones.map((zone) => zone.timeframe))];
+  const sourceCount = uniqueZones.length;
+  const status = side === "mixed" ? "Mixed / Conflict Candidate" : sourceCount >= CONFLUENCE_CONFIG.minSourcesForStrong ? "Strong Confluence Candidate" : timeframes.length >= 2 ? "MTF Alignment" : "Confluence Candidate";
+  const labels = uniqueZones.map((zone) => zone.label).slice(0, 4);
+  return { id: `confluence-${activeTimeframe}-${labels.join("-").replace(/\W+/g, "-")}`, label: labels.join(" + "), side, lower, upper, midpoint, distancePct: distanceToZonePct({ lower, upper }, currentPrice), relation, sourceCount, timeframes, sourceTypes, zones: uniqueZones, status, note: `${relation}: ${labels.join(" aligns with ")}. For planning context only.` };
+}
+
+function buildConfluenceCandidates(activeTimeframe) {
+  const zones = collectConfluenceZones(activeTimeframe);
+  const candles = marketData[activeTimeframe] || [];
+  const lastClosed = candles.at(-1);
+  if (!zones.length || !lastClosed) return createEmptyConfluenceContext();
+  const candidates = [];
+  for (let i = 0; i < zones.length; i += 1) {
+    for (let j = i + 1; j < zones.length; j += 1) {
+      const relation = zonesOverlapOrNear(zones[i], zones[j], activeTimeframe);
+      if (!relation.matches) continue;
+      const group = [zones[i], zones[j]];
+      zones.forEach((zone, index) => {
+        if (index === i || index === j) return;
+        if (group.some((candidateZone) => zonesOverlapOrNear(candidateZone, zone, activeTimeframe).matches)) group.push(zone);
+      });
+      const candidate = makeConfluenceCandidate(group, relation.relation, activeTimeframe, lastClosed.close);
+      if (candidate && !candidates.some((existing) => existing.id === candidate.id)) candidates.push(candidate);
+    }
+  }
+  if (!candidates.length) return createEmptyConfluenceContext();
+  return { available: true, activeTimeframe, candidates, strongestCandidate: null, upsideCandidates: [], downsideCandidates: [], mixedCandidates: [], summary: `${candidates.length} confluence candidates detected` };
+}
+
+function buildConfluenceContext(activeTimeframe) {
+  const context = buildConfluenceCandidates(activeTimeframe);
+  if (!context.available) return context;
+  const sorted = (context.candidates || []).slice().sort((a, b) => {
+    if (b.sourceCount !== a.sourceCount) return b.sourceCount - a.sourceCount;
+    return (a.distancePct ?? 999) - (b.distancePct ?? 999);
+  }).slice(0, CONFLUENCE_CONFIG.maxCandidates);
+  return { ...context, candidates: sorted, strongestCandidate: sorted[0] || null, upsideCandidates: sorted.filter((candidate) => candidate.side === "upside").slice(0, 3), downsideCandidates: sorted.filter((candidate) => candidate.side === "downside").slice(0, 3), mixedCandidates: sorted.filter((candidate) => candidate.side === "mixed").slice(0, 3), summary: sorted[0] ? `${sorted[0].status}: ${sorted[0].label}` : "No confluence candidate detected" };
+}
+
+function rebuildConfluenceContext(activeTimeframe) {
+  const tf = activeTimeframe || getActiveTimeframe();
+  confluenceContext = buildConfluenceContext(tf);
+  console.info("[Confluence Context]", { activeTimeframe: tf, candidates: confluenceContext?.candidates?.length || 0, strongestCandidate: confluenceContext?.strongestCandidate });
+  return confluenceContext;
+}
+
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.analysis = {
   createEmptyStructureContext,
@@ -478,5 +618,13 @@ window.BtcDash.analysis = {
   deriveChannelStatus,
   buildChannelContext,
   rebuildAllChannelContexts,
-  getProjectedChannelContextsForActiveTimeframe
+  getProjectedChannelContextsForActiveTimeframe,
+  createEmptyConfluenceContext,
+  normalizeZoneForConfluence,
+  collectConfluenceZones,
+  zonesOverlapOrNear,
+  classifyConfluenceSide,
+  buildConfluenceCandidates,
+  buildConfluenceContext,
+  rebuildConfluenceContext
 };

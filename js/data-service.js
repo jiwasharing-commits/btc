@@ -90,6 +90,7 @@ async function loadAllRepoData({ runAutoUpdate = autoUpdateEnabled } = {}) {
     rebuildAllFvgContexts();
     rebuildAllChannelContexts();
     marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
+    rebuildConfluenceContext(getActiveTimeframe());
     dataStatusMessage = cachedData ? "Repo data loaded and merged with local cache." : "Repo data loaded.";
     loading = false;
     renderAll();
@@ -235,6 +236,7 @@ async function autoUpdateFromBinance() {
   rebuildAllFvgContexts();
   rebuildAllChannelContexts();
   marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
+  rebuildConfluenceContext(getActiveTimeframe());
   const entries = Object.entries(updateSummary);
   const successEntries = entries.filter(([, result]) => !result.error);
   const totalAdded = successEntries.reduce((sum, [, result]) => sum + (result.addedClosed ?? 0), 0);

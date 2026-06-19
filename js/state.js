@@ -5,6 +5,7 @@ const srContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
 let marketZonesContext = { upside: [], downside: [], nearestSupport: null, nearestResistance: null, activeTimeframe: null, summary: "" };
 const fvgContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
 const channelContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
+let confluenceContext = { available: false, activeTimeframe: null, candidates: [], strongestCandidate: null, upsideCandidates: [], downsideCandidates: [], mixedCandidates: [], summary: "No confluence candidate detected" };
 let daily4hFvgConfluence = { status: "None", type: null, overlapLower: null, overlapUpper: null, dailyFvg: null, h4Fvg: null, strength: "Moderate", note: "No FVG confluence" };
 const rangeState = { "Weekly Map": "3Y", "Daily + 4H Setup": "3M", "1H Timing": "14D" };
 let activeWorkspace = "Weekly Map";
@@ -29,6 +30,8 @@ window.BtcDash.state = {
   srContexts,
   fvgContexts,
   channelContexts,
+  get confluenceContext() { return confluenceContext; },
+  set confluenceContext(value) { confluenceContext = value; },
   activeLayers,
   rangeState,
   get marketZonesContext() { return marketZonesContext; },
