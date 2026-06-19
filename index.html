@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BTC Pattern Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="dashboard-shell">
+      <header class="hero-header">
+        <div>
+          <p class="eyebrow">Pulse Lab style workspace</p>
+          <h1>BTC Pattern Dashboard</h1>
+          <p class="subtitle">BTC-USD | Uploaded JSON + Binance Sync | Running Candle: Preview Only</p>
+        </div>
+        <div class="badge-row" aria-label="Mode badges">
+          <span class="badge">Closed Candle Only</span>
+          <span class="badge badge-warn">Preview Running Candle</span>
+          <span class="badge">MTF Mode</span>
+        </div>
+      </header>
+
+      <section class="control-bar" aria-label="Dashboard controls">
+        <button id="load-data" type="button">Load Repo Data</button>
+        <button type="button" disabled title="Coming soon">Update from Binance</button>
+        <button type="button" disabled title="Coming soon">Export Updated Data</button>
+        <button id="reset-cache" type="button" class="ghost">Reset Local Cache</button>
+      </section>
+
+      <nav class="tab-row workspace-tabs" aria-label="Workspace tabs"></nav>
+
+      <section class="summary-grid" aria-label="Global summary cards"></section>
+
+      <section id="workspace-content" class="workspace-content" aria-live="polite"></section>
+
+      <section class="layer-control" aria-label="Layer control">
+        <button class="active" type="button">MA</button>
+        <button class="active" type="button">Structure</button>
+        <button class="active" type="button">FVG</button>
+        <button class="active" type="button">S/R</button>
+        <button type="button">EQH/EQL</button>
+        <button class="active" type="button">Channel</button>
+        <button class="active" type="button">Confluence</button>
+        <button type="button">Scenario Levels</button>
+      </section>
+
+      <nav class="tab-row detail-tabs" aria-label="Bottom detail tabs"></nav>
+      <section id="detail-content" class="detail-content" aria-live="polite"></section>
+    </main>
+    <script src="script.js"></script>
+  </body>
+</html>
