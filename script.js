@@ -330,6 +330,14 @@ function getVisibleCandles(timeframe, range) {
 function getActiveConfig() { return workspaceConfig[activeWorkspace]; }
 function getActiveTimeframe() { return getActiveConfig()?.timeframe ?? "1W"; }
 function getActiveCandles() { const config = getActiveConfig(); return config ? getVisibleCandles(config.timeframe, rangeState[activeWorkspace]) : []; }
+function getDisplayCandlesForChart(timeframe, closed = getVisibleCandles(timeframe, rangeState[activeWorkspace])) {
+  const running = runningCandles[timeframe];
+  if (!running) return closed;
+  const lastClosed = closed[closed.length - 1];
+  if (!lastClosed) return closed;
+  if (running.open_time <= lastClosed.open_time) return closed;
+  return [...closed, { ...running, is_running_preview: true }];
+}
 function simpleTrend(tf, upText, downText, minBack = 20) {
   const candles = marketData[tf];
   if (candles.length <= minBack) return tf === "1D" ? "Warning" : "Neutral";
@@ -341,7 +349,7 @@ function renderDataStatus() {
   if (!el) return;
   const cacheState = cacheMeta ? "Active" : "Empty";
   const lastUpdate = cacheMeta?.updated_at ? new Date(cacheMeta.updated_at).toLocaleString() : "—";
-  const runningPreview = ["1H", "4H"].map((tf) => `${tf} running close: ${fmtPrice(runningCandles[tf]?.close)}${runningCandles[tf] ? " (Preview Only)" : ""}`).join(" • ");
+  const runningPreview = ["1W", "1D", "4H", "1H"].map((tf) => `${tf} running close: ${fmtPrice(runningCandles[tf]?.close)}${runningCandles[tf] ? " (Preview Only)" : ""}`).join(" • ");
   el.innerHTML = `
     <span><strong>Data Source:</strong> Repo + Binance Runtime</span>
     <span><strong>Last Binance Update:</strong> ${lastUpdate}</span>
@@ -407,14 +415,19 @@ function toChartCandles(candles) {
   }));
 }
 
-function chart(title, timeframe, candles, strip = []) {
+function chart(title, timeframe, closedCandles, strip = []) {
   const allCount = marketData[timeframe]?.length ?? 0;
-  const last = marketData[timeframe]?.at(-1);
+  const lastClosed = marketData[timeframe]?.at(-1);
+  const running = runningCandles[timeframe];
+  const hasRunningPreview = Boolean(running && closedCandles.length && running.open_time > closedCandles.at(-1).open_time);
+  const countLabel = hasRunningPreview ? `${allCount} closed + 1 running preview` : `${allCount}`;
+  const runningLabel = hasRunningPreview ? ` • Running preview: ${fmtPrice(running.close)}` : '';
   return `${strip.length ? `<div class="context-strip">${strip.map(metric).join('')}</div>` : ''}
   ${rangeSelector(getActiveConfig())}
   <div class="chart-panel tradingview-panel">
-    <div class="chart-title"><h2>${title}</h2><p>Candles loaded: ${allCount} • Visible candles: ${candles.length} • Active TF last close: ${fmtPrice(last?.close)}</p></div>
+    <div class="chart-title"><h2>${title}</h2><p>Candles loaded: ${countLabel} • Visible closed: ${closedCandles.length} • Active TF last closed: ${fmtPrice(lastClosed?.close)}${runningLabel}</p></div>
     <div id="main-chart" class="trading-chart" aria-label="TradingView-style candlestick chart"></div>
+    <div class="running-overlay ${hasRunningPreview ? '' : 'is-hidden'}"><span>Running Preview<br><small>Preview Only</small></span></div>
     <div class="fvg-overlay ${activeLayers.FVG ? '' : 'is-hidden'}"><span>FVG Zone</span></div>
     <div class="chart-watermark">${timeframe} • BTCUSDT</div>
   </div>`;
@@ -433,36 +446,52 @@ function clearTradingChart() {
   channelSeries = [];
 }
 
-function addDummyPriceLines(candles) {
-  if (!candleSeries || !candles.length) return;
-  const lastClose = candles.at(-1).close;
+function addDummyPriceLines(closedCandles, running) {
+  if (!candleSeries || !closedCandles.length) return;
+  const lastClosed = closedCandles.at(-1).close;
   candleSeries.createPriceLine({
-    price: lastClose,
+    price: lastClosed,
     color: "#ef4444",
     lineWidth: 1,
     lineStyle: LightweightCharts.LineStyle.Dotted,
     axisLabelVisible: true,
-    title: "Last"
+    title: "Last Closed"
   });
 
+  if (running && running.open_time > closedCandles.at(-1).open_time) {
+    candleSeries.createPriceLine({
+      price: running.close,
+      color: "#facc15",
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dotted,
+      axisLabelVisible: true,
+      title: "Running"
+    });
+  }
+
   if (!activeLayers["S/R"]) return;
-  const recent = candles.slice(-80);
+  const recent = closedCandles.slice(-80);
   const support = Math.min(...recent.map((c) => c.low));
   const resistance = Math.max(...recent.map((c) => c.high));
   candleSeries.createPriceLine({ price: support, color: "#22c55e", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "Support" });
   candleSeries.createPriceLine({ price: resistance, color: "#f97316", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "Resistance" });
 }
 
-function addDummyMarkers(candles) {
-  if (!candleSeries || !activeLayers.Structure || candles.length < 8) {
-    candleSeries?.setMarkers([]);
+function addDummyMarkers(closedCandles, running, timeframe) {
+  if (!candleSeries) return;
+  const markers = [];
+  if (!activeLayers.Structure || closedCandles.length < 8) {
+    if (running && closedCandles.length && running.open_time > closedCandles.at(-1).open_time) {
+      markers.push({ time: Math.floor(running.open_time / 1000), position: "aboveBar", color: "#facc15", shape: "circle", text: `Running ${timeframe.replace("1", "")}` });
+    }
+    candleSeries.setMarkers(markers);
     return;
   }
   const labels = ["HL", "HH", "HL", "LH", "LL", "HH"];
-  const start = Math.max(0, candles.length - 72);
-  const step = Math.max(5, Math.floor((candles.length - start) / labels.length));
-  const markers = labels.map((label, index) => {
-    const candle = candles[Math.min(candles.length - 1, start + index * step)];
+  const start = Math.max(0, closedCandles.length - 72);
+  const step = Math.max(5, Math.floor((closedCandles.length - start) / labels.length));
+  markers.push(...labels.map((label, index) => {
+    const candle = closedCandles[Math.min(closedCandles.length - 1, start + index * step)];
     const above = label === "HH" || label === "LH";
     return {
       time: Math.floor(candle.open_time / 1000),
@@ -471,7 +500,10 @@ function addDummyMarkers(candles) {
       shape: above ? "arrowDown" : "arrowUp",
       text: label
     };
-  });
+  }));
+  if (running && closedCandles.length && running.open_time > closedCandles.at(-1).open_time) {
+    markers.push({ time: Math.floor(running.open_time / 1000), position: "aboveBar", color: "#facc15", shape: "circle", text: `Running ${timeframe === "1W" ? "W" : timeframe}` });
+  }
   candleSeries.setMarkers(markers);
 }
 
@@ -497,8 +529,12 @@ function renderTradingChart() {
     container.innerHTML = `<div class="status-panel error">Failed to load TradingView Lightweight Charts CDN.</div>`;
     return;
   }
-  const candles = getActiveCandles();
-  if (!candles.length) {
+  const config = getActiveConfig();
+  const timeframe = config.timeframe;
+  const closedCandles = getActiveCandles();
+  const running = runningCandles[timeframe];
+  const displayCandles = getDisplayCandlesForChart(timeframe, closedCandles);
+  if (!closedCandles.length) {
     container.innerHTML = `<div class="status-panel">No candles in selected range.</div>`;
     return;
   }
@@ -527,10 +563,10 @@ function renderTradingChart() {
     wickDownColor: "#fca5a5",
     priceLineVisible: false
   });
-  candleSeries.setData(toChartCandles(candles));
-  addDummyPriceLines(candles);
-  addDummyMarkers(candles);
-  addDummyChannel(candles);
+  candleSeries.setData(toChartCandles(displayCandles));
+  addDummyPriceLines(closedCandles, running);
+  addDummyMarkers(closedCandles, running, timeframe);
+  addDummyChannel(closedCandles);
   tradingChart.timeScale().fitContent();
 
   resizeObserver = new ResizeObserver(() => {

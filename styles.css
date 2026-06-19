@@ -83,6 +83,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .chart-title { position: absolute; top: 20px; left: 22px; z-index: 2; }
 .tradingview-panel { isolation: isolate; }
 .trading-chart { position: absolute; inset: 98px 0 0; width: 100%; height: calc(100% - 98px); z-index: 1; }
+.running-overlay { position: absolute; right: 7%; top: 18%; border: 1px solid rgba(250, 204, 21, .5); background: rgba(250, 204, 21, .13); color: #fef3c7; border-radius: 12px; padding: 10px 12px; font-size: 12px; font-weight: 950; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; z-index: 4; }
+.running-overlay small { color: #fde68a; font-size: 10px; }
+.running-overlay.is-hidden { display: none; }
 .fvg-overlay { position: absolute; right: 17%; top: 34%; width: 24%; height: 15%; border: 1px solid rgba(34, 197, 94, .38); background: rgba(34, 197, 94, .12); border-radius: 10px; color: #bbf7d0; font-size: 12px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; display: grid; place-items: start; padding: 10px; pointer-events: none; z-index: 3; }
 .fvg-overlay.is-hidden { display: none; }
 .chart-watermark { position: absolute; left: 26px; bottom: 28px; z-index: 2; color: rgba(203, 213, 225, .16); font-size: clamp(38px, 7vw, 108px); font-weight: 950; letter-spacing: -.06em; pointer-events: none; }
@@ -109,4 +112,4 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 16px; } th, td { padding: 14px; border-bottom: 1px solid var(--border); text-align: left; } th { color: var(--accent); background: rgba(57,211,255,.08); }
 
 @media (max-width: 1200px) { .summary-grid, .detail-grid.six { grid-template-columns: repeat(3, minmax(0, 1fr)); } .detail-grid, .mtf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 768px) { .dashboard-shell { padding: 14px; } .hero-header { align-items: flex-start; flex-direction: column; } .summary-grid, .detail-grid, .detail-grid.six, .mtf-grid, .scenario-card { grid-template-columns: repeat(1, minmax(0, 1fr)); } .chart-panel { min-height: 520px; } .trading-chart { top: 118px; height: calc(100% - 118px); } .fvg-overlay { right: 8%; width: 44%; } .candle { width: 14px; } }
+@media (max-width: 768px) { .dashboard-shell { padding: 14px; } .hero-header { align-items: flex-start; flex-direction: column; } .summary-grid, .detail-grid, .detail-grid.six, .mtf-grid, .scenario-card { grid-template-columns: repeat(1, minmax(0, 1fr)); } .chart-panel { min-height: 520px; } .trading-chart { top: 118px; height: calc(100% - 118px); } .running-overlay { right: 8%; top: 24%; } .fvg-overlay { right: 8%; width: 44%; } .candle { width: 14px; } }
