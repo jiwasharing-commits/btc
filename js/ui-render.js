@@ -69,7 +69,7 @@ function renderSummary() {
     "FVG Confluence": daily4hFvgConfluence.status === "Active Confluence" ? `Active D+4H ${daily4hFvgConfluence.type}` : daily4hFvgConfluence.status === "Conflict" ? "Conflict" : "No FVG Confluence",
     "Channel": channel.status,
     "Confluence": confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel} ${confluenceContext.strongestCandidate.score}/10` : "No Candidate",
-    "Top Scenario": "Bullish 8/10",
+    "Top Scenario": scenarioContext.primaryScenario ? `${scenarioContext.primaryScenario.label} ${scenarioContext.primaryScenario.score}/10<small>Planning context only</small>` : "Scenario context not available",
     "Risk": getZoneRiskLabel()
   };
   qs('.summary-grid').innerHTML = Object.entries(summary).map(([k, v]) => `<article class="summary-card"><div class="card-label">${k}</div><div class="card-value">${v}</div></article>`).join('');
@@ -99,7 +99,7 @@ function renderWorkspace() {
       const sr = srContexts[tf] ?? createEmptySrContext(tf);
       const fvg = fvgContexts[tf] ?? createEmptyFvgContext(tf);
       const channel = channelContexts[tf] ?? createEmptyChannelContext(tf);
-      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>${structure.status}<br>BOS/CHoCH: ${structure.bosChoch.status}<br>S/R: Support ${formatZone(sr.nearestSupport)} | Resistance ${formatZone(sr.nearestResistance)}<br>FVG: ${fvg.nearestFvg ? `${fvg.nearestFvg.status} ${fvg.nearestFvg.type}` : "None"}<br>Channel: ${channel.status}<br>Confluence: ${confluenceContext.summary}`);
+      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>${structure.status}<br>BOS/CHoCH: ${structure.bosChoch.status}<br>S/R: Support ${formatZone(sr.nearestSupport)} | Resistance ${formatZone(sr.nearestResistance)}<br>FVG: ${fvg.nearestFvg ? `${fvg.nearestFvg.status} ${fvg.nearestFvg.type}` : "None"}<br>Channel: ${channel.status}<br>Confluence: ${confluenceContext.summary}<br>Scenario: ${scenarioContext.summary}`);
     }).join('')}</div>`;
     return;
   }
@@ -251,6 +251,27 @@ function renderConfluenceTab() {
   ].join('')}</div>`;
 }
 
+
+function scenarioChipLabel(scenario) {
+  const shortLabel = scenario.type.charAt(0).toUpperCase() + scenario.type.slice(1);
+  return `${shortLabel} ${scenario.score}/10`;
+}
+
+function renderScenarioPlanTab() {
+  const context = scenarioContext?.activeTimeframe === getActiveTimeframe() ? scenarioContext : rebuildScenarioContext(getActiveTimeframe());
+  if (!context.available) return `<div class="summary-box card">${context.summary}<br>Planning context only.</div>`;
+  const primary = context.primaryScenario || context.waitScenario;
+  const chips = context.scenarios.map((scenario) => `<span class="scenario-chip ${scenario.isPrimary ? 'primary' : ''}">${scenarioChipLabel(scenario)}</span>`).join('');
+  const list = (items, cls) => `<ul class="${cls}">${(items?.length ? items : ['Pending confirmation']).map((item) => `<li>${item}</li>`).join('')}</ul>`;
+  const confluence = primary.confluenceCandidate ? `${primary.confluenceCandidate.scoreLabel} ${primary.confluenceCandidate.score}/10` : (confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel} ${confluenceContext.strongestCandidate.score}/10` : 'No confluence candidate');
+  return `<h2>Multi-Scenario Planning</h2><p class="subtitle">Planning context only • For review only • Not a trading signal.</p><div class="scenario-chip-grid">${chips}</div><article class="scenario-card primary"><div class="card-label">Primary Scenario</div><h2>${primary.label}</h2><div class="scenario-score">Score: ${primary.score}/10 — ${primary.scoreLabel}</div><p>${primary.status}</p><div class="channel-zone-value">Reference Zone: ${formatZone(primary.referenceZone)}<br>Scenario context: ${primary.summary}</div></article><div class="scenario-card-grid">${[
+    ['Scenario Zone', `Reference zone only<br>${formatZone(primary.referenceZone)}<br><span class="scenario-pending-note">Pending Patch 8 for exact watch area</span>`],
+    ['Confirmation Needed', list(primary.confirmationNeeds, 'scenario-reason-list')],
+    ['Confluence', confluence],
+    ['Risk Notes', `${list(primary.riskNotes, 'scenario-risk-list')}<div class="scenario-pending-note">Invalidation reference, target ladder, and RR pending Patch 8.</div>`]
+  ].map(([title, body]) => `<article class="scenario-card"><div class="card-label">${title}</div><div>${body}</div></article>`).join('')}</div><div class="scenario-card-grid"><article class="scenario-card"><div class="card-label">Reasons</div>${list(primary.reasons, 'scenario-reason-list')}</article><article class="scenario-card"><div class="card-label">Pending Items</div>${list(primary.pendingItems, 'scenario-reason-list')}</article></div>`;
+}
+
 function renderDetail() {
   const el = qs('#detail-content');
   const grid = (items, cls='detail-grid') => `<div class="${cls}">${items.map(([a,b]) => card(a,b)).join('')}</div>`;
@@ -259,7 +280,7 @@ function renderDetail() {
   const data = {
     'Indicator': `<div class="selector-row">${['Volume','RSI','MACD','ATR','Volatility','Structure'].map(metric).join('')}</div>${grid([['Volume Status', last ? 'Loaded' : 'Waiting Data'],['Last Volume', fmtVolume(last?.volume)],['RSI','Placeholder'],['ATR','Placeholder'],['Volatility','Placeholder']], 'detail-grid six')}<div class="mini-chart"></div>`,
     'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position', (channelContexts[getActiveTimeframe()] ?? createEmptyChannelContext(getActiveTimeframe())).status],['Confluence', confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel} ${confluenceContext.strongestCandidate.score}/10` : 'No Candidate'],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>${renderMarketZonesCards()}`,
-    'Scenario Plan': `<h2>Multi-Scenario Planning</h2><p class="subtitle">Read-only planning context • not financial advice or a direct trading signal.</p><div class="chip-row">${['Bullish 8/10','Breakout 6/10','Wait 5/10','Bearish 4/10','Breakdown 2/10'].map((x,i)=>`<span class="chip ${i===0?'active':''}">${x}</span>`).join('')}</div><article class="card"><h2>Top Scenario: Bullish — 8/10</h2><div class="scenario-card">${[['Latest BTC Price',fmtPrice(latest.price)],['Watch Area','103,800 – 104,500'],['SL / Invalid','101,200'],['TP1','106,800'],['TP2','110,200'],['TP3','114,500'],['RR','1.2R / 2.4R / 3.6R'],['Status','Waiting Confirmation']].map(([a,b])=>`<div><span class="card-label">${a}</span><div class="card-value">${b}</div></div>`).join('')}</div></article>${grid([['Reason','Weekly HH-HL valid'],['Reason','4H bullish FVG active'],['Reason','Near support/channel'],['Risk','Invalid if close below SL']])}`,
+    'Scenario Plan': renderScenarioPlanTab(),
     'Structure': (() => {
       const context = structureContexts[getActiveTimeframe()] ?? createEmptyStructureContext(getActiveTimeframe());
       return `${grid([['Active TF Bias', context.bias],['Structure Status', context.status],['Last Swing High', fmtPrice(context.lastSwingHigh?.price)],['Last Swing Low', fmtPrice(context.lastSwingLow?.price)],['BOS / CHoCH', context.bosChoch.status],['Sequence', formatStructureSequence(context)]], 'detail-grid six')}<div class="structure-note card">${context.summary}</div>${renderMtfStructureCards()}`;
@@ -302,5 +323,6 @@ window.BtcDash.ui = {
   renderMtfFvgCards,
   renderChannelTab,
   renderMtfChannelCards,
-  renderConfluenceTab
+  renderConfluenceTab,
+  renderScenarioPlanTab
 };

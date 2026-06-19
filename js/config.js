@@ -100,6 +100,32 @@ const CONFLUENCE_SCORE_CONFIG = {
   ]
 };
 
+const SCENARIO_CONFIG = {
+  maxScenarioScore: 10,
+  scenarioTypes: ["bullish", "bearish", "breakout", "breakdown", "wait"],
+  labels: {
+    bullish: "Bullish Scenario",
+    bearish: "Bearish Scenario",
+    breakout: "Breakout Scenario",
+    breakdown: "Breakdown Scenario",
+    wait: "Wait / No Clear Scenario"
+  },
+  scoreLabels: [
+    { min: 8, label: "High Potential Context" },
+    { min: 6.5, label: "Good Context" },
+    { min: 5, label: "Developing Context" },
+    { min: 3, label: "Weak Context" },
+    { min: 0, label: "Low Quality Context" }
+  ],
+  weights: {
+    confluenceScore: 0.45,
+    structureAlignment: 0.25,
+    zoneQuality: 0.15,
+    confirmationContext: 0.10,
+    riskPenalty: 0.05
+  }
+};
+
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.config = {
   DATA_FILES,
@@ -119,5 +145,6 @@ window.BtcDash.config = {
   FVG_CONFIG,
   CHANNEL_CONFIG,
   CONFLUENCE_CONFIG,
-  CONFLUENCE_SCORE_CONFIG
+  CONFLUENCE_SCORE_CONFIG,
+  SCENARIO_CONFIG
 };

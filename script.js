@@ -3,6 +3,7 @@
     activeWorkspace = name;
     marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
     rebuildConfluenceContext(getActiveTimeframe());
+    rebuildScenarioContext(getActiveTimeframe());
     renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace');
     renderSummary();
     renderWorkspace();
@@ -19,6 +20,7 @@
     rangeState[activeWorkspace] = range;
     marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
     rebuildConfluenceContext(getActiveTimeframe());
+    rebuildScenarioContext(getActiveTimeframe());
     renderSummary();
     renderWorkspace();
     renderDetail();

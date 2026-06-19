@@ -163,3 +163,15 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
 .confluence-score-label { color: #a7f3d0; font-size: .82rem; font-weight: 850; }
 .confluence-factor-list, .confluence-risk-list { margin: 10px 0 0; padding-left: 18px; color: #dbeafe; font-size: .78rem; line-height: 1.45; }
 .confluence-risk-list { color: #fecaca; }
+.scenario-chip-grid { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.scenario-chip { border: 1px solid var(--border); background: rgba(15, 23, 42, .8); color: var(--muted); border-radius: 999px; padding: 8px 12px; font-weight: 850; font-size: .82rem; }
+.scenario-chip.primary { color: #ecfeff; background: linear-gradient(135deg, rgba(14, 165, 233, .35), rgba(20, 184, 166, .2)); border-color: rgba(125, 211, 252, .45); box-shadow: 0 0 0 1px rgba(125, 211, 252, .1); }
+.scenario-card-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; width: 100%; margin-top: 12px; }
+.scenario-card { border: 1px solid rgba(125, 211, 252, .18); background: rgba(15, 23, 42, .76); border-radius: 16px; padding: 14px; box-shadow: 0 12px 30px rgba(2, 6, 23, .2); }
+.scenario-card.primary { background: linear-gradient(180deg, rgba(14, 116, 144, .24), rgba(15, 23, 42, .88)); }
+.scenario-score { color: #bae6fd; font-weight: 950; margin: 8px 0; }
+.scenario-reason-list, .scenario-risk-list { margin: 8px 0 0; padding-left: 18px; color: #dbeafe; font-size: .82rem; line-height: 1.45; }
+.scenario-risk-list { color: #fecaca; }
+.scenario-pending-note { color: var(--muted); font-size: .78rem; line-height: 1.45; }
+@media (max-width: 1200px) { .scenario-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 768px) { .scenario-card-grid { grid-template-columns: 1fr; } }

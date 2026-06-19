@@ -638,6 +638,134 @@ function rebuildConfluenceContext(activeTimeframe) {
   return confluenceContext;
 }
 
+
+const SCENARIO_PENDING_ITEMS = [
+  "Invalidation reference will be calculated in Patch 8",
+  "TP ladder will be calculated in Patch 8",
+  "RR will be calculated in Patch 8"
+];
+
+function createEmptyScenarioContext(reason = "Scenario context not available") {
+  return { available: false, activeTimeframe: null, scenarios: [], primaryScenario: null, bullishScenario: null, bearishScenario: null, breakoutScenario: null, breakdownScenario: null, waitScenario: null, summary: reason };
+}
+
+function buildScenarioInputSnapshot(activeTimeframe) {
+  const candles = marketData[activeTimeframe] || [];
+  const lastClosed = candles.at(-1) || null;
+  return { activeTimeframe, currentPrice: lastClosed?.close || null, lastClosed, structure: structureContexts?.[activeTimeframe] || null, weeklyStructure: structureContexts?.["1W"] || null, dailyStructure: structureContexts?.["1D"] || null, h4Structure: structureContexts?.["4H"] || null, h1Structure: structureContexts?.["1H"] || null, marketZones: marketZonesContext || null, confluence: confluenceContext || null, sr: srContexts?.[activeTimeframe] || null, fvg: fvgContexts?.[activeTimeframe] || null, channel: channelContexts?.[activeTimeframe] || null };
+}
+
+function getScenarioScoreLabel(score) {
+  const found = (SCENARIO_CONFIG.scoreLabels || []).find((item) => score >= item.min);
+  return found ? found.label : "Low Quality Context";
+}
+
+function normalizeScenarioScore(score) {
+  return Math.max(0, Math.min(SCENARIO_CONFIG.maxScenarioScore, Number(score.toFixed(1))));
+}
+
+function makeScenarioBase(type, overrides = {}) {
+  return { id: `scenario-${type}`, type, label: SCENARIO_CONFIG.labels[type], available: true, isPrimary: false, score: 0, scoreLabel: "Low Quality Context", status: "Scenario context developing", direction: type === "bullish" || type === "breakout" ? "bullish" : type === "bearish" || type === "breakdown" ? "bearish" : "neutral", referenceZone: null, confluenceCandidate: null, structureAlignment: "neutral", confirmationNeeds: [], reasons: [], riskNotes: [], pendingItems: [...SCENARIO_PENDING_ITEMS], summary: "Planning context only", ...overrides };
+}
+
+function fallbackZoneFromMarketZones(snapshot, side) {
+  const zone = side === "downside" ? snapshot.marketZones?.downside?.[0] : snapshot.marketZones?.upside?.[0];
+  return zone || null;
+}
+
+function structureFits(structure, allowed) {
+  return allowed.includes(structure?.bias || "Unclear");
+}
+
+function buildBullishScenario(snapshot) {
+  const candidate = snapshot.confluence?.downsideCandidates?.[0] || null;
+  const referenceZone = candidate || fallbackZoneFromMarketZones(snapshot, "downside") || snapshot.sr?.nearestSupport || snapshot.fvg?.nearestBullishFvg || null;
+  const fits = structureFits(snapshot.structure, ["Bullish", "Range", "Mixed"]);
+  return makeScenarioBase("bullish", { available: Boolean(referenceZone), status: "Support reaction context developing", referenceZone, confluenceCandidate: candidate, structureAlignment: fits ? "aligned" : "conflict", reasons: [candidate ? "Downside confluence candidate available" : "Downside reference zone available", `Structure is ${snapshot.structure?.bias || "unclear"}`, "Support/FVG/Channel lower alignment detected"], riskNotes: ["Requires confirmation from lower timeframe reaction", "No invalidation/TP calculated yet"], confirmationNeeds: ["1H/4H reaction confirmation required"], summary: "Bullish scenario context for review only" });
+}
+
+function buildBearishScenario(snapshot) {
+  const candidate = snapshot.confluence?.upsideCandidates?.[0] || null;
+  const referenceZone = candidate || fallbackZoneFromMarketZones(snapshot, "upside") || snapshot.sr?.nearestResistance || snapshot.fvg?.nearestBearishFvg || null;
+  const fits = structureFits(snapshot.structure, ["Bearish", "Range", "Mixed"]);
+  return makeScenarioBase("bearish", { available: Boolean(referenceZone), status: "Resistance reaction context developing", referenceZone, confluenceCandidate: candidate, structureAlignment: fits ? "aligned" : "conflict", reasons: [candidate ? "Upside confluence candidate available" : "Upside reference zone available", `Structure is ${snapshot.structure?.bias || "unclear"}`, "Resistance/FVG/Channel upper alignment detected"], riskNotes: ["Requires confirmation from lower timeframe reaction", "No invalidation/TP calculated yet"], confirmationNeeds: ["1H/4H reaction confirmation required"], summary: "Bearish scenario context for review only" });
+}
+
+function buildBreakoutScenario(snapshot) {
+  const bos = snapshot.structure?.bosChoch?.status || "None";
+  const candidate = snapshot.confluence?.upsideCandidates?.[0] || null;
+  const referenceZone = candidate || fallbackZoneFromMarketZones(snapshot, "upside");
+  const confirming = bos === "BOS Up" || bos === "CHoCH Up" || snapshot.structure?.bias === "Bullish";
+  return makeScenarioBase("breakout", { available: Boolean(referenceZone || confirming), status: "Breakout context developing", referenceZone, confluenceCandidate: candidate, structureAlignment: confirming ? "aligned" : "neutral", reasons: [confirming ? `${bos} / bullish structure context present` : "Breakout confirmation not present yet", candidate ? "Upside confluence candidate available" : "Upside boundary context available", "Watch for resistance/channel upper reaction context"], riskNotes: ["Needs retest confirmation", "Breakout failure risk exists", "No invalidation/TP calculated yet"], confirmationNeeds: ["Close continuation and retest confirmation required"], summary: "Breakout scenario context for review only" });
+}
+
+function buildBreakdownScenario(snapshot) {
+  const bos = snapshot.structure?.bosChoch?.status || "None";
+  const candidate = snapshot.confluence?.downsideCandidates?.[0] || null;
+  const referenceZone = candidate || fallbackZoneFromMarketZones(snapshot, "downside");
+  const confirming = bos === "BOS Down" || bos === "CHoCH Down" || snapshot.structure?.bias === "Bearish";
+  return makeScenarioBase("breakdown", { available: Boolean(referenceZone || confirming), status: "Breakdown context developing", referenceZone, confluenceCandidate: candidate, structureAlignment: confirming ? "aligned" : "neutral", reasons: [confirming ? `${bos} / bearish structure context present` : "Breakdown confirmation not present yet", candidate ? "Downside confluence candidate available" : "Downside boundary context available", "Watch for support/channel lower reaction context"], riskNotes: ["Needs retest confirmation", "Breakdown failure risk exists", "No invalidation/TP calculated yet"], confirmationNeeds: ["Close continuation and retest confirmation required"], summary: "Breakdown scenario context for review only" });
+}
+
+function buildWaitScenario(snapshot, otherScenarios) {
+  const bestDirectional = Math.max(...otherScenarios.map((scenario) => scenario.confluenceCandidate?.score || 0), 0);
+  const mixed = snapshot.structure?.bias === "Mixed" || snapshot.structure?.bias === "Unclear" || snapshot.confluence?.mixedCandidates?.length;
+  return makeScenarioBase("wait", { available: true, status: "Waiting for clearer scenario context", direction: "neutral", referenceZone: null, confluenceCandidate: snapshot.confluence?.strongestCandidate || null, structureAlignment: mixed ? "neutral" : "aligned", reasons: [bestDirectional < 5 ? "No high-quality scenario context" : "Directional scenarios need confirmation", mixed ? "Structure or confluence is mixed" : "Waiting for confirmation near key zones", "Better wait for confirmation"], riskNotes: ["Not a trading signal", "SL/TP pending Patch 8"], confirmationNeeds: ["Wait for cleaner structure/confluence confirmation"], summary: "Wait scenario context for review only" });
+}
+
+function deriveScenarioPlanningScore(scenario, snapshot) {
+  let score = (scenario.confluenceCandidate?.score || 0) * 0.45;
+  if (scenario.type === "wait") score = 4;
+  if (scenario.structureAlignment === "aligned") score += 2;
+  else if (scenario.structureAlignment === "neutral") score += 1;
+  else if (scenario.structureAlignment === "conflict") score -= 1;
+  if (scenario.referenceZone) score += 1;
+  const bos = snapshot.structure?.bosChoch?.status || "None";
+  const bullishConfirm = scenario.direction === "bullish" && (bos === "BOS Up" || bos === "CHoCH Up");
+  const bearishConfirm = scenario.direction === "bearish" && (bos === "BOS Down" || bos === "CHoCH Down");
+  if (bullishConfirm || bearishConfirm) score += 1;
+  const heavyRisks = scenario.riskNotes.filter((note) => /failure|conflict|not a trading signal/i.test(note)).length;
+  score -= Math.min(2, heavyRisks * 0.5);
+  if (!scenario.available && scenario.type !== "wait") score = 0;
+  score = normalizeScenarioScore(score);
+  return { score, scoreLabel: getScenarioScoreLabel(score) };
+}
+
+function selectPrimaryScenario(scenarios) {
+  const directional = scenarios.filter((scenario) => scenario.type !== "wait" && scenario.available);
+  const wait = scenarios.find((scenario) => scenario.type === "wait");
+  const mixedDominant = confluenceContext?.mixedCandidates?.[0]?.score >= 6;
+  if (!directional.length || Math.max(...directional.map((scenario) => scenario.score), 0) < 5 || mixedDominant) {
+    wait.isPrimary = true;
+    return wait;
+  }
+  const priority = { breakout: 0, breakdown: 0, bullish: 1, bearish: 1, wait: 2 };
+  const primary = directional.slice().sort((a, b) => b.score - a.score || priority[a.type] - priority[b.type])[0] || wait;
+  primary.isPrimary = true;
+  return primary;
+}
+
+function buildScenarioContext(activeTimeframe) {
+  const snapshot = buildScenarioInputSnapshot(activeTimeframe);
+  if (!snapshot.currentPrice) return createEmptyScenarioContext("No active closed candle");
+  const bullish = buildBullishScenario(snapshot);
+  const bearish = buildBearishScenario(snapshot);
+  const breakout = buildBreakoutScenario(snapshot);
+  const breakdown = buildBreakdownScenario(snapshot);
+  const preliminary = [bullish, bearish, breakout, breakdown];
+  const wait = buildWaitScenario(snapshot, preliminary);
+  const scenarios = [bullish, bearish, breakout, breakdown, wait].map((scenario) => ({ ...scenario, ...deriveScenarioPlanningScore(scenario, snapshot) }));
+  const primaryScenario = selectPrimaryScenario(scenarios);
+  return { available: true, activeTimeframe, scenarios, primaryScenario, bullishScenario: scenarios.find((scenario) => scenario.type === "bullish"), bearishScenario: scenarios.find((scenario) => scenario.type === "bearish"), breakoutScenario: scenarios.find((scenario) => scenario.type === "breakout"), breakdownScenario: scenarios.find((scenario) => scenario.type === "breakdown"), waitScenario: scenarios.find((scenario) => scenario.type === "wait"), summary: primaryScenario ? `${primaryScenario.label}: ${primaryScenario.score}/10 ${primaryScenario.scoreLabel}` : "Scenario context not available" };
+}
+
+function rebuildScenarioContext(activeTimeframe) {
+  const tf = activeTimeframe || getActiveTimeframe();
+  scenarioContext = buildScenarioContext(tf);
+  console.info("[Scenario Context]", { activeTimeframe: tf, primaryScenario: scenarioContext.primaryScenario, scenarios: scenarioContext.scenarios?.length || 0 });
+  return scenarioContext;
+}
+
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.analysis = {
   createEmptyStructureContext,
@@ -681,5 +809,18 @@ window.BtcDash.analysis = {
   buildConfluenceContext,
   rebuildConfluenceContext,
   getConfluenceScoreLabel,
-  deriveConfluenceScore
+  deriveConfluenceScore,
+  createEmptyScenarioContext,
+  buildScenarioInputSnapshot,
+  getScenarioScoreLabel,
+  normalizeScenarioScore,
+  buildBullishScenario,
+  buildBearishScenario,
+  buildBreakoutScenario,
+  buildBreakdownScenario,
+  buildWaitScenario,
+  deriveScenarioPlanningScore,
+  selectPrimaryScenario,
+  buildScenarioContext,
+  rebuildScenarioContext
 };
