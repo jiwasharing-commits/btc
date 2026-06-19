@@ -35,19 +35,20 @@
       <section id="workspace-content" class="workspace-content" aria-live="polite"></section>
 
       <section class="layer-control" aria-label="Layer control">
-        <button class="active" type="button">MA</button>
-        <button class="active" type="button">Structure</button>
-        <button class="active" type="button">FVG</button>
-        <button class="active" type="button">S/R</button>
-        <button type="button">EQH/EQL</button>
-        <button class="active" type="button">Channel</button>
-        <button class="active" type="button">Confluence</button>
-        <button type="button">Scenario Levels</button>
+        <button class="active" type="button" data-layer="MA">MA</button>
+        <button class="active" type="button" data-layer="Structure">Structure</button>
+        <button class="active" type="button" data-layer="FVG">FVG</button>
+        <button class="active" type="button" data-layer="S/R">S/R</button>
+        <button type="button" data-layer="EQH/EQL">EQH/EQL</button>
+        <button class="active" type="button" data-layer="Channel">Channel</button>
+        <button class="active" type="button" data-layer="Confluence">Confluence</button>
+        <button type="button" data-layer="Scenario Levels">Scenario Levels</button>
       </section>
 
       <nav class="tab-row detail-tabs" aria-label="Bottom detail tabs"></nav>
       <section id="detail-content" class="detail-content" aria-live="polite"></section>
     </main>
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
     <script src="script.js"></script>
   </body>
 </html>

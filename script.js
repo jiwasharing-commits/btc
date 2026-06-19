@@ -29,6 +29,11 @@ let activeWorkspace = "Weekly Map";
 let activeDetail = "Indicator";
 let loading = false;
 let loadError = "";
+let tradingChart = null;
+let candleSeries = null;
+let resizeObserver = null;
+let channelSeries = [];
+const activeLayers = { MA: true, Structure: true, FVG: true, "S/R": true, "EQH/EQL": false, Channel: true, Confluence: true, "Scenario Levels": false };
 
 const qs = (s) => document.querySelector(s);
 const card = (label, value) => `<article class="card"><div class="card-label">${label}</div><div class="card-value">${value}</div></article>`;
@@ -128,28 +133,14 @@ function rangeSelector(config) {
   return `<div class="range-row">${config.ranges.map((range) => `<button type="button" class="${rangeState[activeWorkspace] === range ? 'active' : ''}" onclick="setRange('${range}')">${range}</button>`).join('')}</div>`;
 }
 
-function candleSvg(candles) {
-  if (!candles.length) return `<div class="empty-chart">No candles in selected range.</div>`;
-  const width = 1200;
-  const height = 470;
-  const pad = 28;
-  const lows = candles.map((c) => c.low);
-  const highs = candles.map((c) => c.high);
-  const min = Math.min(...lows);
-  const max = Math.max(...highs);
-  const span = max - min || 1;
-  const step = (width - pad * 2) / Math.max(candles.length, 1);
-  const bodyWidth = Math.max(2, Math.min(12, step * 0.58));
-  const y = (price) => pad + (max - price) / span * (height - pad * 2);
-  const nodes = candles.map((c, index) => {
-    const x = pad + index * step + step / 2;
-    const bullish = c.close >= c.open;
-    const color = bullish ? "#57f2a7" : "#ff7893";
-    const top = Math.min(y(c.open), y(c.close));
-    const bodyHeight = Math.max(1, Math.abs(y(c.open) - y(c.close)));
-    return `<line x1="${x}" x2="${x}" y1="${y(c.high)}" y2="${y(c.low)}" stroke="${color}" stroke-width="1.3" opacity="0.9"/><rect x="${x - bodyWidth / 2}" y="${top}" width="${bodyWidth}" height="${bodyHeight}" rx="1.5" fill="${color}" opacity="0.86"/>`;
-  }).join('');
-  return `<svg class="candle-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Candlestick chart">${nodes}</svg>`;
+function toChartCandles(candles) {
+  return candles.map((candle) => ({
+    time: Math.floor(candle.open_time / 1000),
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close
+  }));
 }
 
 function chart(title, timeframe, candles, strip = []) {
@@ -157,11 +148,132 @@ function chart(title, timeframe, candles, strip = []) {
   const last = marketData[timeframe]?.at(-1);
   return `${strip.length ? `<div class="context-strip">${strip.map(metric).join('')}</div>` : ''}
   ${rangeSelector(getActiveConfig())}
-  <div class="chart-panel">
+  <div class="chart-panel tradingview-panel">
     <div class="chart-title"><h2>${title}</h2><p>Candles loaded: ${allCount} • Visible candles: ${candles.length} • Last close: ${fmtPrice(last?.close)}</p></div>
-    ${candleSvg(candles)}
-    <div class="annotation a1">Real OHLC data</div><div class="annotation a2">Range: ${rangeState[activeWorkspace]}</div><div class="annotation a3">TF: ${timeframe}</div>
+    <div id="main-chart" class="trading-chart" aria-label="TradingView-style candlestick chart"></div>
+    <div class="fvg-overlay ${activeLayers.FVG ? '' : 'is-hidden'}"><span>FVG Zone</span></div>
+    <div class="chart-watermark">${timeframe} • BTCUSDT</div>
   </div>`;
+}
+
+function clearTradingChart() {
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+  if (tradingChart) {
+    tradingChart.remove();
+    tradingChart = null;
+  }
+  candleSeries = null;
+  channelSeries = [];
+}
+
+function addDummyPriceLines(candles) {
+  if (!candleSeries || !candles.length) return;
+  const lastClose = candles.at(-1).close;
+  candleSeries.createPriceLine({
+    price: lastClose,
+    color: "#ef4444",
+    lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dotted,
+    axisLabelVisible: true,
+    title: "Last"
+  });
+
+  if (!activeLayers["S/R"]) return;
+  const recent = candles.slice(-80);
+  const support = Math.min(...recent.map((c) => c.low));
+  const resistance = Math.max(...recent.map((c) => c.high));
+  candleSeries.createPriceLine({ price: support, color: "#22c55e", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "Support" });
+  candleSeries.createPriceLine({ price: resistance, color: "#f97316", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "Resistance" });
+}
+
+function addDummyMarkers(candles) {
+  if (!candleSeries || !activeLayers.Structure || candles.length < 8) {
+    candleSeries?.setMarkers([]);
+    return;
+  }
+  const labels = ["HL", "HH", "HL", "LH", "LL", "HH"];
+  const start = Math.max(0, candles.length - 72);
+  const step = Math.max(5, Math.floor((candles.length - start) / labels.length));
+  const markers = labels.map((label, index) => {
+    const candle = candles[Math.min(candles.length - 1, start + index * step)];
+    const above = label === "HH" || label === "LH";
+    return {
+      time: Math.floor(candle.open_time / 1000),
+      position: above ? "aboveBar" : "belowBar",
+      color: above ? "#38bdf8" : "#a78bfa",
+      shape: above ? "arrowDown" : "arrowUp",
+      text: label
+    };
+  });
+  candleSeries.setMarkers(markers);
+}
+
+function addDummyChannel(candles) {
+  if (!tradingChart || !activeLayers.Channel || candles.length < 12) return;
+  const segment = candles.slice(-60);
+  const first = segment[0];
+  const last = segment.at(-1);
+  const upperOffset = Math.max(...segment.map((c) => c.high)) * 0.018;
+  const lowerOffset = Math.max(...segment.map((c) => c.high)) * 0.018;
+  const upper = tradingChart.addLineSeries({ color: "rgba(56, 189, 248, 0.72)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+  const lower = tradingChart.addLineSeries({ color: "rgba(167, 139, 250, 0.66)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+  upper.setData([{ time: Math.floor(first.open_time / 1000), value: first.high + upperOffset }, { time: Math.floor(last.open_time / 1000), value: last.high + upperOffset }]);
+  lower.setData([{ time: Math.floor(first.open_time / 1000), value: first.low - lowerOffset }, { time: Math.floor(last.open_time / 1000), value: last.low - lowerOffset }]);
+  channelSeries = [upper, lower];
+}
+
+function renderTradingChart() {
+  clearTradingChart();
+  const container = qs('#main-chart');
+  if (!container || activeWorkspace === 'MTF Summary') return;
+  if (!window.LightweightCharts) {
+    container.innerHTML = `<div class="status-panel error">Failed to load TradingView Lightweight Charts CDN.</div>`;
+    return;
+  }
+  const candles = getActiveCandles();
+  if (!candles.length) {
+    container.innerHTML = `<div class="status-panel">No candles in selected range.</div>`;
+    return;
+  }
+
+  tradingChart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: container.clientHeight,
+    layout: { background: { color: "#0b1220" }, textColor: "#cbd5e1", fontFamily: "Inter, system-ui, sans-serif" },
+    grid: {
+      vertLines: { color: "rgba(148, 163, 184, 0.12)" },
+      horzLines: { color: "rgba(148, 163, 184, 0.12)" }
+    },
+    rightPriceScale: { borderColor: "rgba(148, 163, 184, 0.25)", visible: true, scaleMargins: { top: 0.12, bottom: 0.12 } },
+    timeScale: { borderColor: "rgba(148, 163, 184, 0.25)", timeVisible: true, secondsVisible: false, rightOffset: 8, barSpacing: 8 },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+    handleScale: { axisPressedMouseMove: true, mouseWheel: false, pinch: true }
+  });
+
+  candleSeries = tradingChart.addCandlestickSeries({
+    upColor: "#22c55e",
+    downColor: "#ef4444",
+    borderUpColor: "#22c55e",
+    borderDownColor: "#ef4444",
+    wickUpColor: "#86efac",
+    wickDownColor: "#fca5a5",
+    priceLineVisible: false
+  });
+  candleSeries.setData(toChartCandles(candles));
+  addDummyPriceLines(candles);
+  addDummyMarkers(candles);
+  addDummyChannel(candles);
+  tradingChart.timeScale().fitContent();
+
+  resizeObserver = new ResizeObserver(() => {
+    if (!tradingChart || !container.clientWidth || !container.clientHeight) return;
+    tradingChart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+  });
+  resizeObserver.observe(container);
 }
 
 function mtfStatus(tf) {
@@ -174,9 +286,10 @@ function mtfStatus(tf) {
 
 function renderWorkspace() {
   const el = qs('#workspace-content');
-  if (loading) { el.innerHTML = `<div class="status-panel">Loading data...</div>`; return; }
-  if (loadError) { el.innerHTML = `<div class="status-panel error">${loadError}</div>`; return; }
+  if (loading) { clearTradingChart(); el.innerHTML = `<div class="status-panel">Loading data...</div>`; return; }
+  if (loadError) { clearTradingChart(); el.innerHTML = `<div class="status-panel error">${loadError}</div>`; return; }
   if (activeWorkspace === 'MTF Summary') {
+    clearTradingChart();
     el.innerHTML = `<div class="mtf-grid">${["1W", "1D", "4H", "1H"].map((tf) => {
       const candles = marketData[tf];
       return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>First date: ${fmtDate(candles[0])}<br>Last date: ${fmtDate(candles.at(-1))}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>Simple status: ${mtfStatus(tf)}`);
@@ -185,6 +298,7 @@ function renderWorkspace() {
   }
   const config = getActiveConfig();
   el.innerHTML = chart(config.title, config.timeframe, getActiveCandles(), config.strip ?? []);
+  requestAnimationFrame(renderTradingChart);
 }
 
 function setWorkspace(name) { activeWorkspace = name; renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace'); renderSummary(); renderWorkspace(); renderDetail(); }
@@ -228,5 +342,13 @@ function renderAll() {
 
 qs('#load-data').addEventListener('click', loadAllRepoData);
 qs('#reset-cache').addEventListener('click', () => { localStorage.clear(); renderAll(); });
+qs('.layer-control').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-layer]');
+  if (!button) return;
+  const layer = button.dataset.layer;
+  activeLayers[layer] = !activeLayers[layer];
+  button.classList.toggle('active', activeLayers[layer]);
+  renderWorkspace();
+});
 renderAll();
 loadAllRepoData();
