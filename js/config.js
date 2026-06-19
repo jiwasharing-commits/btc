@@ -126,6 +126,19 @@ const SCENARIO_CONFIG = {
   }
 };
 
+const RISK_PLAN_CONFIG = {
+  maxTargets: 3,
+  minRiskPct: 0.15,
+  maxRiskPct: { "1W": 12, "1D": 7, "4H": 4, "1H": 2 },
+  bufferPct: { "1W": 2.0, "1D": 1.0, "4H": 0.6, "1H": 0.35 },
+  minRewardRisk: 1.2,
+  labels: {
+    unavailable: "Risk plan not available",
+    referenceOnly: "Reference only",
+    pendingConfirmation: "Needs confirmation"
+  }
+};
+
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.config = {
   DATA_FILES,
@@ -146,5 +159,6 @@ window.BtcDash.config = {
   CHANNEL_CONFIG,
   CONFLUENCE_CONFIG,
   CONFLUENCE_SCORE_CONFIG,
-  SCENARIO_CONFIG
+  SCENARIO_CONFIG,
+  RISK_PLAN_CONFIG
 };

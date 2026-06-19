@@ -665,7 +665,7 @@ function normalizeScenarioScore(score) {
 }
 
 function makeScenarioBase(type, overrides = {}) {
-  return { id: `scenario-${type}`, type, label: SCENARIO_CONFIG.labels[type], available: true, isPrimary: false, score: 0, scoreLabel: "Low Quality Context", status: "Scenario context developing", direction: type === "bullish" || type === "breakout" ? "bullish" : type === "bearish" || type === "breakdown" ? "bearish" : "neutral", referenceZone: null, confluenceCandidate: null, structureAlignment: "neutral", confirmationNeeds: [], reasons: [], riskNotes: [], pendingItems: [...SCENARIO_PENDING_ITEMS], summary: "Planning context only", ...overrides };
+  return { id: `scenario-${type}`, type, label: SCENARIO_CONFIG.labels[type], available: true, isPrimary: false, score: 0, scoreLabel: "Low Quality Context", status: "Scenario context developing", direction: type === "bullish" || type === "breakout" ? "bullish" : type === "bearish" || type === "breakdown" ? "bearish" : "neutral", referenceZone: null, confluenceCandidate: null, structureAlignment: "neutral", confirmationNeeds: [], reasons: [], riskNotes: [], pendingItems: [...SCENARIO_PENDING_ITEMS], summary: "Planning context only", riskPlan: createEmptyRiskPlan(), ...overrides };
 }
 
 function fallbackZoneFromMarketZones(snapshot, side) {
@@ -713,6 +713,115 @@ function buildWaitScenario(snapshot, otherScenarios) {
   return makeScenarioBase("wait", { available: true, status: "Waiting for clearer scenario context", direction: "neutral", referenceZone: null, confluenceCandidate: snapshot.confluence?.strongestCandidate || null, structureAlignment: mixed ? "neutral" : "aligned", reasons: [bestDirectional < 5 ? "No high-quality scenario context" : "Directional scenarios need confirmation", mixed ? "Structure or confluence is mixed" : "Waiting for confirmation near key zones", "Better wait for confirmation"], riskNotes: ["Not a trading signal", "SL/TP pending Patch 8"], confirmationNeeds: ["Wait for cleaner structure/confluence confirmation"], summary: "Wait scenario context for review only" });
 }
 
+
+function createEmptyRiskPlan(reason = "Risk plan not available") {
+  return { available: false, watchArea: null, invalidation: null, targets: [], rr: null, quality: "Unavailable", notes: [reason] };
+}
+
+function getScenarioDirection(scenario) {
+  if (!scenario) return "neutral";
+  if (scenario.type === "bullish" || scenario.type === "breakout") return "bullish";
+  if (scenario.type === "bearish" || scenario.type === "breakdown") return "bearish";
+  return "neutral";
+}
+
+function normalizeRiskZone(zone, fallbackLabel = "Reference zone") {
+  if (!zone) return null;
+  const lower = Number(zone.lower ?? zone.zoneLower);
+  const upper = Number(zone.upper ?? zone.zoneUpper);
+  const midpoint = Number(zone.midpoint ?? zone.level ?? ((lower + upper) / 2));
+  if (!Number.isFinite(lower) || !Number.isFinite(upper) || !Number.isFinite(midpoint)) return null;
+  return { available: true, label: zone.label || fallbackLabel, lower: Math.min(lower, upper), upper: Math.max(lower, upper), midpoint, source: zone.source || zone.zoneType || fallbackLabel, timeframe: zone.timeframe || getActiveTimeframe(), note: "Reference watch area only" };
+}
+
+function deriveScenarioWatchArea(scenario, snapshot) {
+  const direction = getScenarioDirection(scenario);
+  if (direction === "neutral") return null;
+  const candidates = direction === "bullish"
+    ? [scenario.confluenceCandidate, snapshot.confluence?.downsideCandidates?.[0], snapshot.sr?.nearestSupport, snapshot.fvg?.nearestBullishFvg, snapshot.marketZones?.downside?.[0]]
+    : [scenario.confluenceCandidate, snapshot.confluence?.upsideCandidates?.[0], snapshot.sr?.nearestResistance, snapshot.fvg?.nearestBearishFvg, snapshot.marketZones?.upside?.[0]];
+  if (snapshot.channel?.available && snapshot.channel.projectedLevels) {
+    const key = direction === "bullish" ? "lower" : "upper";
+    const level = snapshot.channel.projectedLevels[key];
+    candidates.push({ label: `${snapshot.activeTimeframe} Channel ${key}`, lower: level * 0.998, upper: level * 1.002, midpoint: level, source: "channel", timeframe: snapshot.activeTimeframe });
+    candidates.push({ label: `${snapshot.activeTimeframe} Channel midline`, lower: snapshot.channel.projectedLevels.mid * 0.999, upper: snapshot.channel.projectedLevels.mid * 1.001, midpoint: snapshot.channel.projectedLevels.mid, source: "channel", timeframe: snapshot.activeTimeframe });
+  }
+  return normalizeRiskZone(candidates.find(Boolean), "Scenario watch area");
+}
+
+function deriveScenarioInvalidation(scenario, watchArea, snapshot) {
+  const direction = getScenarioDirection(scenario);
+  if (!watchArea?.available || direction === "neutral") return null;
+  const bufferPct = RISK_PLAN_CONFIG.bufferPct[snapshot.activeTimeframe] ?? 0.5;
+  const buffer = watchArea.midpoint * (bufferPct / 100);
+  const level = direction === "bullish" ? watchArea.lower - buffer : watchArea.upper + buffer;
+  return { available: true, level, label: direction === "bullish" ? "Below watch area" : "Above watch area", bufferPct, note: "Invalidation reference only" };
+}
+
+function collectTargetZones(snapshot, direction) {
+  const zones = [];
+  const add = (zone, label) => { const normalized = normalizeRiskZone(zone, label); if (normalized) zones.push(normalized); };
+  if (direction === "bullish") {
+    (snapshot.marketZones?.upside || []).forEach((zone) => add(zone, "Upside market zone"));
+    (snapshot.confluence?.upsideCandidates || []).forEach((zone) => add(zone, "Upside confluence"));
+    add(snapshot.sr?.nearestResistance, "Nearest resistance");
+    add(snapshot.fvg?.nearestBearishFvg, "Bearish FVG reference");
+    if (snapshot.channel?.available) add({ label: `${snapshot.activeTimeframe} Channel upper`, lower: snapshot.channel.projectedLevels.upper * 0.998, upper: snapshot.channel.projectedLevels.upper * 1.002, midpoint: snapshot.channel.projectedLevels.upper, source: "channel", timeframe: snapshot.activeTimeframe }, "Channel upper");
+  } else {
+    (snapshot.marketZones?.downside || []).forEach((zone) => add(zone, "Downside market zone"));
+    (snapshot.confluence?.downsideCandidates || []).forEach((zone) => add(zone, "Downside confluence"));
+    add(snapshot.sr?.nearestSupport, "Nearest support");
+    add(snapshot.fvg?.nearestBullishFvg, "Bullish FVG reference");
+    if (snapshot.channel?.available) add({ label: `${snapshot.activeTimeframe} Channel lower`, lower: snapshot.channel.projectedLevels.lower * 0.998, upper: snapshot.channel.projectedLevels.lower * 1.002, midpoint: snapshot.channel.projectedLevels.lower, source: "channel", timeframe: snapshot.activeTimeframe }, "Channel lower");
+  }
+  return zones;
+}
+
+function deriveScenarioTargetLadder(scenario, watchArea, invalidation, snapshot) {
+  const direction = getScenarioDirection(scenario);
+  if (!watchArea?.available || !invalidation?.available || direction === "neutral") return [];
+  const targets = collectTargetZones(snapshot, direction)
+    .filter((zone) => direction === "bullish"
+      ? zone.midpoint > snapshot.currentPrice && zone.midpoint > watchArea.upper && zone.midpoint > invalidation.level
+      : zone.midpoint < snapshot.currentPrice && zone.midpoint < watchArea.lower && zone.midpoint < invalidation.level)
+    .sort((a, b) => direction === "bullish" ? a.midpoint - b.midpoint : b.midpoint - a.midpoint);
+  const deduped = [];
+  targets.forEach((zone) => {
+    if (deduped.some((existing) => Math.abs(existing.midpoint - zone.midpoint) / zone.midpoint * 100 < 0.25)) return;
+    deduped.push(zone);
+  });
+  return deduped.slice(0, RISK_PLAN_CONFIG.maxTargets).map((zone, index) => ({ id: `tp${index + 1}`, label: `TP${index + 1} Reference`, level: zone.midpoint, zoneLower: zone.lower, zoneUpper: zone.upper, source: zone.source, timeframe: zone.timeframe, distancePct: distanceToZonePct({ lower: zone.lower, upper: zone.upper }, snapshot.currentPrice), note: "Target reference only" }));
+}
+
+function calculateRiskReward(scenario, watchArea, invalidation, targets, snapshot) {
+  const direction = getScenarioDirection(scenario);
+  if (!watchArea?.available || !invalidation?.available || !targets.length || direction === "neutral") return { risk: null, riskPct: null, targetRrs: [], bestRr: null, quality: "Unavailable" };
+  const reference = watchArea.midpoint;
+  const risk = direction === "bullish" ? reference - invalidation.level : invalidation.level - reference;
+  const riskPct = risk / reference * 100;
+  if (!Number.isFinite(risk) || risk <= 0 || riskPct < RISK_PLAN_CONFIG.minRiskPct) return { risk, riskPct, targetRrs: [], bestRr: null, quality: "Unavailable" };
+  const targetRrs = targets.map((target) => {
+    const reward = direction === "bullish" ? target.level - reference : reference - target.level;
+    return { id: target.id, rr: Number((reward / risk).toFixed(2)) };
+  }).filter((item) => item.rr > 0);
+  const bestRr = targetRrs.length ? Math.max(...targetRrs.map((item) => item.rr)) : null;
+  const tp1 = targetRrs[0]?.rr ?? 0;
+  const quality = riskPct > (RISK_PLAN_CONFIG.maxRiskPct[snapshot.activeTimeframe] ?? 5) ? "Weak" : tp1 >= RISK_PLAN_CONFIG.minRewardRisk && targetRrs.length >= 2 ? "Good" : tp1 >= 1 ? "Developing" : targetRrs.length ? "Weak" : "Unavailable";
+  return { risk, riskPct: Number(riskPct.toFixed(2)), targetRrs, bestRr, quality };
+}
+
+function buildScenarioRiskPlan(scenario, snapshot) {
+  const direction = getScenarioDirection(scenario);
+  if (direction === "neutral") return createEmptyRiskPlan("No directional scenario");
+  const watchArea = deriveScenarioWatchArea(scenario, snapshot);
+  if (!watchArea?.available) return createEmptyRiskPlan("No valid watch area");
+  const invalidation = deriveScenarioInvalidation(scenario, watchArea, snapshot);
+  if (!invalidation?.available) return createEmptyRiskPlan("No valid invalidation reference");
+  const targets = deriveScenarioTargetLadder(scenario, watchArea, invalidation, snapshot);
+  const rr = calculateRiskReward(scenario, watchArea, invalidation, targets, snapshot);
+  return { available: Boolean(targets.length && rr?.quality !== "Unavailable"), watchArea, invalidation, targets, rr, quality: rr?.quality || "Unavailable", notes: ["Reference only", "Use closed candle context", "Needs confirmation before any planning decision"] };
+}
+
 function deriveScenarioPlanningScore(scenario, snapshot) {
   let score = (scenario.confluenceCandidate?.score || 0) * 0.45;
   if (scenario.type === "wait") score = 4;
@@ -726,6 +835,7 @@ function deriveScenarioPlanningScore(scenario, snapshot) {
   if (bullishConfirm || bearishConfirm) score += 1;
   const heavyRisks = scenario.riskNotes.filter((note) => /failure|conflict|not a trading signal/i.test(note)).length;
   score -= Math.min(2, heavyRisks * 0.5);
+  if (scenario.riskPlan && !scenario.riskPlan.available && scenario.type !== "wait") score -= 0.75;
   if (!scenario.available && scenario.type !== "wait") score = 0;
   score = normalizeScenarioScore(score);
   return { score, scoreLabel: getScenarioScoreLabel(score) };
@@ -754,7 +864,11 @@ function buildScenarioContext(activeTimeframe) {
   const breakdown = buildBreakdownScenario(snapshot);
   const preliminary = [bullish, bearish, breakout, breakdown];
   const wait = buildWaitScenario(snapshot, preliminary);
-  const scenarios = [bullish, bearish, breakout, breakdown, wait].map((scenario) => ({ ...scenario, ...deriveScenarioPlanningScore(scenario, snapshot) }));
+  const scenarios = [bullish, bearish, breakout, breakdown, wait].map((scenario) => {
+    const riskPlan = scenario.type === "wait" ? createEmptyRiskPlan("Wait scenario has no directional risk plan") : buildScenarioRiskPlan(scenario, snapshot);
+    const withRiskPlan = { ...scenario, riskPlan };
+    return { ...withRiskPlan, ...deriveScenarioPlanningScore(withRiskPlan, snapshot) };
+  });
   const primaryScenario = selectPrimaryScenario(scenarios);
   return { available: true, activeTimeframe, scenarios, primaryScenario, bullishScenario: scenarios.find((scenario) => scenario.type === "bullish"), bearishScenario: scenarios.find((scenario) => scenario.type === "bearish"), breakoutScenario: scenarios.find((scenario) => scenario.type === "breakout"), breakdownScenario: scenarios.find((scenario) => scenario.type === "breakdown"), waitScenario: scenarios.find((scenario) => scenario.type === "wait"), summary: primaryScenario ? `${primaryScenario.label}: ${primaryScenario.score}/10 ${primaryScenario.scoreLabel}` : "Scenario context not available" };
 }
@@ -822,5 +936,12 @@ window.BtcDash.analysis = {
   deriveScenarioPlanningScore,
   selectPrimaryScenario,
   buildScenarioContext,
-  rebuildScenarioContext
+  rebuildScenarioContext,
+  createEmptyRiskPlan,
+  getScenarioDirection,
+  deriveScenarioWatchArea,
+  deriveScenarioInvalidation,
+  deriveScenarioTargetLadder,
+  calculateRiskReward,
+  buildScenarioRiskPlan
 };
