@@ -56,6 +56,14 @@ const SR_CONFIG = {
 };
 const srContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
 let marketZonesContext = { upside: [], downside: [], nearestSupport: null, nearestResistance: null, activeTimeframe: null, summary: "" };
+const FVG_CONFIG = {
+  "1W": { maxActiveZones: 8, minGapPct: 0.8, lookbackCandles: 220, label: "Weekly FVG" },
+  "1D": { maxActiveZones: 10, minGapPct: 0.35, lookbackCandles: 260, label: "Daily FVG" },
+  "4H": { maxActiveZones: 12, minGapPct: 0.18, lookbackCandles: 420, label: "4H FVG" },
+  "1H": { maxActiveZones: 10, minGapPct: 0.10, lookbackCandles: 600, label: "1H FVG" }
+};
+const fvgContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
+let daily4hFvgConfluence = { status: "None", type: null, overlapLower: null, overlapUpper: null, dailyFvg: null, h4Fvg: null, strength: "Moderate", note: "No FVG confluence" };
 const rangeState = { "Weekly Map": "3Y", "Daily + 4H Setup": "3M", "1H Timing": "14D" };
 let activeWorkspace = "Weekly Map";
 let activeDetail = "Indicator";
@@ -177,6 +185,8 @@ async function loadAllRepoData({ runAutoUpdate = autoUpdateEnabled } = {}) {
     applyRepoAndCache(repoData, cachedData);
     rebuildAllStructureContexts();
     rebuildAllSrContexts();
+    rebuildAllFvgContexts();
+    marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
     dataStatusMessage = cachedData ? "Repo data loaded and merged with local cache." : "Repo data loaded.";
     loading = false;
     renderAll();
@@ -319,6 +329,8 @@ async function autoUpdateFromBinance() {
 
   rebuildAllStructureContexts();
   rebuildAllSrContexts();
+  rebuildAllFvgContexts();
+  marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
   const entries = Object.entries(updateSummary);
   const successEntries = entries.filter(([, result]) => !result.error);
   const totalAdded = successEntries.reduce((sum, [, result]) => sum + (result.addedClosed ?? 0), 0);
@@ -528,11 +540,19 @@ function buildMarketZonesContext(activeTimeframe) {
   const rows = [];
   [activeTimeframe, "1W", "1D", "4H"].filter((tf, i, arr) => arr.indexOf(tf) === i).forEach((timeframe) => {
     const context = srContexts[timeframe];
-    if (!context?.available) return;
-    [...context.supportZones, ...context.resistanceZones].forEach((zone) => {
-      if (zone.midpoint > currentPrice) rows.push(zoneToMarketRow(zone, "upside", timeframe, currentPrice));
-      if (zone.midpoint < currentPrice) rows.push(zoneToMarketRow(zone, "downside", timeframe, currentPrice));
-    });
+    if (context?.available) {
+      [...context.supportZones, ...context.resistanceZones].forEach((zone) => {
+        if (zone.midpoint > currentPrice) rows.push(zoneToMarketRow(zone, "upside", timeframe, currentPrice));
+        if (zone.midpoint < currentPrice) rows.push(zoneToMarketRow(zone, "downside", timeframe, currentPrice));
+      });
+    }
+    const fvgContext = fvgContexts[timeframe];
+    if (fvgContext?.available) {
+      fvgContext.activeFvgs.forEach((fvg) => {
+        const side = fvg.midpoint >= currentPrice ? "upside" : "downside";
+        rows.push({ id: fvg.id, side, zoneType: "fvg", timeframe, label: `${timeframe} ${fvg.type === "bullish" ? "Bullish" : "Bearish"} FVG`, lower: fvg.lower, upper: fvg.upper, midpoint: fvg.midpoint, distancePct: fvg.distancePct, strengthScore: fvg.strengthScore, status: fvg.status, source: fvg.source, note: "FVG confluence candidate" });
+      });
+    }
   });
   const upside = rows.filter((row) => row.side === "upside").sort((a, b) => a.distancePct - b.distancePct).slice(0, 3);
   const downside = rows.filter((row) => row.side === "downside").sort((a, b) => a.distancePct - b.distancePct).slice(0, 3);
@@ -542,6 +562,79 @@ function buildMarketZonesContext(activeTimeframe) {
 function rebuildAllSrContexts() {
   ["1W", "1D", "4H", "1H"].forEach((timeframe) => { srContexts[timeframe] = buildSrContext(timeframe); });
   marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
+}
+
+function createEmptyFvgContext(timeframe, reason = "No active FVG detected") {
+  return { available: false, timeframe, bullishFvgs: [], bearishFvgs: [], activeFvgs: [], nearestBullishFvg: null, nearestBearishFvg: null, nearestFvg: null, summary: reason };
+}
+
+function deriveFvgStatus(fvg, candles) {
+  let touched = false;
+  for (const candle of candles.slice(fvg.createdAtIndex + 1)) {
+    if (fvg.type === "bullish") {
+      if (candle.low <= fvg.lower) return { status: "Filled", fillPct: 100 };
+      if (candle.low < fvg.upper) touched = true;
+    } else {
+      if (candle.high >= fvg.upper) return { status: "Filled", fillPct: 100 };
+      if (candle.high > fvg.lower) touched = true;
+    }
+  }
+  return touched ? { status: "Partially Filled", fillPct: 50 } : { status: "Active", fillPct: 0 };
+}
+
+function scanFvgForTimeframe(timeframe) {
+  const config = FVG_CONFIG[timeframe];
+  const candles = (marketData[timeframe] || []).slice(-config.lookbackCandles);
+  const fvgs = [];
+  for (let i = 2; i < candles.length; i += 1) {
+    const first = candles[i - 2];
+    const third = candles[i];
+    let fvg = null;
+    if (first.high < third.low) fvg = { type: "bullish", lower: first.high, upper: third.low };
+    if (first.low > third.high) fvg = { type: "bearish", lower: third.high, upper: first.low };
+    if (!fvg) continue;
+    const midpoint = (fvg.lower + fvg.upper) / 2;
+    const sizePct = ((fvg.upper - fvg.lower) / midpoint) * 100;
+    if (sizePct < config.minGapPct) continue;
+    const globalIndex = (marketData[timeframe] || []).findIndex((c) => c.open_time === third.open_time);
+    const base = { id: `${timeframe}-fvg-${third.open_time}`, timeframe, ...fvg, midpoint, sizePct, startTime: first.open_time, endTime: third.open_time, createdAtIndex: globalIndex, createdAtTime: third.open_time, source: "3-candle FVG", note: `${timeframe} ${fvg.type} FVG` };
+    const status = deriveFvgStatus(base, marketData[timeframe] || []);
+    fvgs.push({ ...base, ...status });
+  }
+  return fvgs;
+}
+
+function buildFvgContext(timeframe) {
+  const candles = marketData[timeframe] || [];
+  if (candles.length < 5) return createEmptyFvgContext(timeframe, "Not enough candles");
+  const currentPrice = candles.at(-1)?.close;
+  const all = scanFvgForTimeframe(timeframe).map((fvg) => ({ ...fvg, distancePct: distanceToZonePct(fvg, currentPrice), strengthScore: Math.min(10, Math.max(2, Math.round(fvg.sizePct * 2))) }));
+  const bullishFvgs = all.filter((fvg) => fvg.type === "bullish");
+  const bearishFvgs = all.filter((fvg) => fvg.type === "bearish");
+  const activeFvgs = all.filter((fvg) => fvg.status === "Active" || fvg.status === "Partially Filled").sort((a, b) => (a.distancePct ?? 999) - (b.distancePct ?? 999)).slice(0, FVG_CONFIG[timeframe].maxActiveZones);
+  const nearestBullishFvg = activeFvgs.find((fvg) => fvg.type === "bullish") ?? null;
+  const nearestBearishFvg = activeFvgs.find((fvg) => fvg.type === "bearish") ?? null;
+  const context = { available: Boolean(activeFvgs.length), timeframe, bullishFvgs, bearishFvgs, activeFvgs, nearestBullishFvg, nearestBearishFvg, nearestFvg: activeFvgs[0] ?? null, summary: activeFvgs.length ? `${FVG_CONFIG[timeframe].label}: ${activeFvgs.length} active/partial FVG zones.` : "No active FVG detected" };
+  console.info("[FVG Context]", timeframe, { active: activeFvgs.length, nearestFvg: context.nearestFvg, bullish: bullishFvgs.length, bearish: bearishFvgs.length });
+  return context;
+}
+
+function deriveDaily4hFvgConfluence() {
+  const daily = fvgContexts["1D"]?.activeFvgs?.[0];
+  const h4 = fvgContexts["4H"]?.activeFvgs?.[0];
+  if (!daily || !h4) return { status: "None", type: null, overlapLower: null, overlapUpper: null, dailyFvg: daily ?? null, h4Fvg: h4 ?? null, strength: "Moderate", note: "No active Daily + 4H FVG pair" };
+  const overlapLower = Math.max(daily.lower, h4.lower);
+  const overlapUpper = Math.min(daily.upper, h4.upper);
+  const hasOverlap = overlapLower < overlapUpper;
+  const near = Math.abs(daily.midpoint - h4.midpoint) / h4.midpoint * 100 < 1.5;
+  if (daily.type === h4.type && hasOverlap) return { status: "Active Confluence", type: daily.type, overlapLower, overlapUpper, dailyFvg: daily, h4Fvg: h4, strength: "Strong", note: "Daily and 4H FVG overlap in the same direction." };
+  if (daily.type !== h4.type && (hasOverlap || near)) return { status: "Conflict", type: "mixed", overlapLower: hasOverlap ? overlapLower : null, overlapUpper: hasOverlap ? overlapUpper : null, dailyFvg: daily, h4Fvg: h4, strength: "Moderate", note: "Daily and 4H FVG are opposing nearby zones." };
+  return { status: "None", type: null, overlapLower: null, overlapUpper: null, dailyFvg: daily, h4Fvg: h4, strength: "Moderate", note: "No Daily + 4H FVG overlap." };
+}
+
+function rebuildAllFvgContexts() {
+  ["1W", "1D", "4H", "1H"].forEach((timeframe) => { fvgContexts[timeframe] = buildFvgContext(timeframe); });
+  daily4hFvgConfluence = deriveDaily4hFvgConfluence();
 }
 
 function formatZone(zone) {
@@ -643,6 +736,7 @@ function renderSummary() {
     "Daily Context": `${daily.bias}<small>${daily.status}</small>`,
     "4H Setup": `${fourH.bias}<small>${fourH.bosChoch.status}</small>`,
     "1H Timing": `${oneH.bias}<small>${oneH.bosChoch.status}</small>`,
+    "FVG Confluence": daily4hFvgConfluence.status === "Active Confluence" ? `Active D+4H ${daily4hFvgConfluence.type}` : daily4hFvgConfluence.status === "Conflict" ? "Conflict" : "No FVG Confluence",
     "Top Scenario": "Bullish 8/10",
     "Risk": getZoneRiskLabel()
   };
@@ -720,18 +814,36 @@ function addDummyPriceLines(closedCandles, running) {
     });
   }
 
-  if (!activeLayers["S/R"]) return;
   const timeframe = getActiveTimeframe();
-  const sr = srContexts[timeframe];
-  if (!sr?.available) return;
-  sr.supportZones.slice(0, 3).forEach((zone, index) => {
-    candleSeries.createPriceLine({ price: zone.upper, color: "#22c55e", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: index === 0 ? "Support" : "S" });
-    candleSeries.createPriceLine({ price: zone.lower, color: "rgba(34, 197, 94, .55)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
-  });
-  sr.resistanceZones.slice(0, 3).forEach((zone, index) => {
-    candleSeries.createPriceLine({ price: zone.lower, color: "#f97316", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: index === 0 ? "Resistance" : "R" });
-    candleSeries.createPriceLine({ price: zone.upper, color: "rgba(249, 115, 22, .55)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
-  });
+  if (activeLayers["S/R"]) {
+    const sr = srContexts[timeframe];
+    if (sr?.available) {
+      sr.supportZones.slice(0, 3).forEach((zone, index) => {
+        candleSeries.createPriceLine({ price: zone.upper, color: "#22c55e", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: index === 0 ? "Support" : "S" });
+        candleSeries.createPriceLine({ price: zone.lower, color: "rgba(34, 197, 94, .55)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
+      });
+      sr.resistanceZones.slice(0, 3).forEach((zone, index) => {
+        candleSeries.createPriceLine({ price: zone.lower, color: "#f97316", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: index === 0 ? "Resistance" : "R" });
+        candleSeries.createPriceLine({ price: zone.upper, color: "rgba(249, 115, 22, .55)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
+      });
+    }
+  }
+  if (activeLayers.FVG) {
+    const fvg = fvgContexts[timeframe];
+    fvg?.activeFvgs?.slice(0, 3).forEach((zone, index) => {
+      const color = zone.type === "bullish" ? "#14b8a6" : "#fb7185";
+      candleSeries.createPriceLine({ price: zone.upper, color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: index === 0, title: index === 0 ? `${timeframe} FVG` : "" });
+      candleSeries.createPriceLine({ price: zone.lower, color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
+    });
+    if (activeWorkspace === "Daily + 4H Setup") {
+      const dailyFvg = fvgContexts["1D"]?.activeFvgs?.[0];
+      if (dailyFvg) {
+        candleSeries.createPriceLine({ price: dailyFvg.upper, color: "rgba(20, 184, 166, .55)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "Daily FVG" });
+        candleSeries.createPriceLine({ price: dailyFvg.lower, color: "rgba(20, 184, 166, .35)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "" });
+      }
+    }
+  }
+
 }
 
 function addDummyMarkers(closedCandles, running, timeframe) {
@@ -844,7 +956,8 @@ function renderWorkspace() {
       const candles = marketData[tf];
       const structure = structureContexts[tf] ?? createEmptyStructureContext(tf);
       const sr = srContexts[tf] ?? createEmptySrContext(tf);
-      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>${structure.status}<br>BOS/CHoCH: ${structure.bosChoch.status}<br>S/R: Support ${formatZone(sr.nearestSupport)} | Resistance ${formatZone(sr.nearestResistance)}`);
+      const fvg = fvgContexts[tf] ?? createEmptyFvgContext(tf);
+      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>${structure.status}<br>BOS/CHoCH: ${structure.bosChoch.status}<br>S/R: Support ${formatZone(sr.nearestSupport)} | Resistance ${formatZone(sr.nearestResistance)}<br>FVG: ${fvg.nearestFvg ? `${fvg.nearestFvg.status} ${fvg.nearestFvg.type}` : "None"}`);
     }).join('')}</div>`;
     return;
   }
@@ -879,9 +992,9 @@ function renderMtfStructureCards() {
 function renderMarketZonesCards() {
   const upside = marketZonesContext.upside[0];
   const downside = marketZonesContext.downside[0];
-  const retest = srContexts[getActiveTimeframe()]?.retestZones?.[0];
   const zoneCard = (title, zone, type) => `<article class="market-zone-card"><div class="card-label">${title}</div><div class="sr-zone-value">${zone ? formatZone(zone) : "—"}</div><span class="zone-status">${zone?.status ?? "No Clear Zone"}</span><div class="zone-distance">${type ? `Type: ${type}<br>` : ""}Distance: ${formatDistance(zone?.distancePct)}<br>Strength: ${zone?.strengthScore ?? "—"}/10</div></article>`;
-  return `<div class="summary-box card"><strong>MARKET ZONES</strong><br>${marketZonesContext.summary}</div><div class="market-zones-grid">${zoneCard("Upside Watch", upside, upside?.label)}${zoneCard("Downside Watch", downside, downside?.label)}${zoneCard("Retest Zone", retest, retest?.type)}</div>`;
+  const confluenceZone = daily4hFvgConfluence.overlapLower ? { lower: daily4hFvgConfluence.overlapLower, upper: daily4hFvgConfluence.overlapUpper, status: daily4hFvgConfluence.status, distancePct: null, strengthScore: daily4hFvgConfluence.strength === "Strong" ? 8 : 5 } : null;
+  return `<div class="summary-box card"><strong>MARKET ZONES</strong><br>${marketZonesContext.summary}</div><div class="market-zones-grid">${zoneCard("Upside Watch", upside, upside?.label)}${zoneCard("Downside Watch", downside, downside?.label)}${zoneCard("D+4H FVG Confluence", confluenceZone, daily4hFvgConfluence.type)}</div>`;
 }
 
 function renderSrTab() {
@@ -904,6 +1017,28 @@ function renderMtfSrCards() {
   }).join('')}</div>`;
 }
 
+function renderFvgTab() {
+  const activeTf = getActiveTimeframe();
+  const context = fvgContexts[activeTf] ?? createEmptyFvgContext(activeTf);
+  const daily = fvgContexts["1D"]?.nearestFvg;
+  const confluence = daily4hFvgConfluence;
+  const detail = (fvg, tf = activeTf) => fvg ? `TF: ${tf}<br>Type: ${fvg.type}<br>Zone: ${formatZone(fvg)}<br>Status: ${fvg.status}<br>Distance: ${formatDistance(fvg.distancePct)}` : "No active FVG detected";
+  const overlap = confluence.overlapLower ? `${fmtPrice(confluence.overlapLower)} – ${fmtPrice(confluence.overlapUpper)}` : "—";
+  return `<div class="fvg-card-grid">${[
+    ["Nearest FVG", detail(context.nearestFvg)],
+    ["Daily FVG", detail(daily, "1D")],
+    ["D+4H Confluence", `Status: ${confluence.status}<br>Overlap: ${overlap}<br>Strength: ${confluence.strength}<br>${confluence.note}`]
+  ].map(([title, body]) => `<article class="fvg-card"><div class="card-label">${title}</div><div class="fvg-zone-value">${body}</div></article>`).join('')}</div>${renderMtfFvgCards()}`;
+}
+
+function renderMtfFvgCards() {
+  return `<div class="fvg-card-grid">${["1W", "1D", "4H", "1H"].map((timeframe) => {
+    const context = fvgContexts[timeframe] ?? createEmptyFvgContext(timeframe);
+    const nearest = context.nearestFvg;
+    return `<article class="fvg-card"><div class="card-label">${timeframe} FVG</div><span class="fvg-badge">${nearest ? nearest.status : "None"}</span><div class="fvg-zone-value">Nearest: ${nearest ? `${nearest.type} ${formatZone(nearest)}` : "No active FVG"}</div></article>`;
+  }).join('')}</div>`;
+}
+
 function renderDetail() {
   const el = qs('#detail-content');
   const grid = (items, cls='detail-grid') => `<div class="${cls}">${items.map(([a,b]) => card(a,b)).join('')}</div>`;
@@ -917,7 +1052,7 @@ function renderDetail() {
       const context = structureContexts[getActiveTimeframe()] ?? createEmptyStructureContext(getActiveTimeframe());
       return `${grid([['Active TF Bias', context.bias],['Structure Status', context.status],['Last Swing High', fmtPrice(context.lastSwingHigh?.price)],['Last Swing Low', fmtPrice(context.lastSwingLow?.price)],['BOS / CHoCH', context.bosChoch.status],['Sequence', formatStructureSequence(context)]], 'detail-grid six')}<div class="structure-note card">${context.summary}</div>${renderMtfStructureCards()}`;
     })(),
-    'FVG': grid([['Nearest FVG','TF: 4H<br>Type: Placeholder<br>Zone: Pending detection<br>Status: Pending'],['Daily FVG','Type: Placeholder<br>Zone: Pending detection<br>Status: Pending'],['D+4H Confluence','Status: Pending<br>Overlap: Pending<br>Strength: Pending']]),
+    'FVG': renderFvgTab(),
     'S/R': renderSrTab(),
     'Channel': grid([['Weekly Channel','Direction: Pending<br>Position: Pending<br>Upper: —<br>Mid: —<br>Lower: —'],['Daily Channel','Direction: Pending<br>Status: No clear breakout'],['4H Channel','Direction: Pending<br>Position: Pending<br>Status: Pending']]),
     'Confluence': grid([['Zone 1 — Strong','Area: Pending<br>Sources: Pending<br>Score: —'],['Zone 2 — Moderate','Area: Pending<br>Sources: Pending<br>Score: —'],['Zone 3 — Risk Area','Area: Pending<br>Sources: Pending<br>Score: —']]),

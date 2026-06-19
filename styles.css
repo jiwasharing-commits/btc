@@ -132,3 +132,10 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
 .zone-distance { color: var(--muted); line-height: 1.55; margin-top: 8px; font-size: 13px; }
 @media (max-width: 1200px) { .sr-card-grid, .market-zones-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 768px) { .sr-card-grid, .market-zones-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); } }
+.fvg-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+.fvg-card { border: 1px solid var(--border); border-radius: 18px; padding: 16px; background: linear-gradient(180deg, rgba(21, 42, 68, .9), rgba(10, 23, 39, .9)); }
+.fvg-zone-value { color: var(--text); font-weight: 850; line-height: 1.55; margin-top: 8px; }
+.fvg-badge, .fvg-status { display: inline-flex; margin-top: 10px; border-radius: 999px; padding: 6px 10px; background: rgba(20, 184, 166, .14); color: #99f6e4; font-size: 12px; font-weight: 900; text-transform: capitalize; }
+.fvg-confluence-card, .fvg-overlay-label { border: 1px solid rgba(20, 184, 166, .3); background: rgba(20, 184, 166, .1); }
+@media (max-width: 1200px) { .fvg-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 768px) { .fvg-card-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); } }
