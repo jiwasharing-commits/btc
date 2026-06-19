@@ -46,7 +46,7 @@ let activeWorkspace = "Weekly Map";
 let activeDetail = "Indicator";
 let loading = false;
 let loadError = "";
-let dataStatusMessage = "Loading repo data...";
+let dataStatusMessage = "Loading repo/cache data...";
 let cacheMeta = null;
 let autoUpdateEnabled = localStorage.getItem(AUTO_UPDATE_KEY) !== "false";
 let binanceDebug = {};
@@ -154,7 +154,7 @@ function clearDataCache() {
 async function loadAllRepoData({ runAutoUpdate = autoUpdateEnabled } = {}) {
   loading = true;
   loadError = "";
-  dataStatusMessage = "Loading repo data...";
+  dataStatusMessage = "Loading repo/cache data...";
   renderAll();
   try {
     const repoData = await loadRepoData();
@@ -166,7 +166,7 @@ async function loadAllRepoData({ runAutoUpdate = autoUpdateEnabled } = {}) {
     if (runAutoUpdate) await autoUpdateFromBinance();
   } catch (error) {
     loadError = error.message;
-    dataStatusMessage = "Repo data load failed.";
+    dataStatusMessage = "Repo/cache data load failed.";
     loading = false;
     renderAll();
   }
@@ -311,7 +311,7 @@ async function autoUpdateFromBinance() {
       : "Binance update finished: no new closed candles";
   } else {
     const reason = entries.map(([tf, result]) => `${tf}: ${result.error}`).join(" | ");
-    dataStatusMessage = `Binance update failed. Existing repo/cache data is still available. Reason: ${reason}`;
+    dataStatusMessage = `Binance update failed. Using repo/cache data. Reason: ${reason}`;
   }
 
   renderAll();
@@ -341,7 +341,7 @@ function renderDataStatus() {
   if (!el) return;
   const cacheState = cacheMeta ? "Active" : "Empty";
   const lastUpdate = cacheMeta?.updated_at ? new Date(cacheMeta.updated_at).toLocaleString() : "—";
-  const runningPreview = ["1H", "4H"].map((tf) => `${tf} running close: ${fmtPrice(runningCandles[tf]?.close)}`).join(" • ");
+  const runningPreview = ["1H", "4H"].map((tf) => `${tf} running close: ${fmtPrice(runningCandles[tf]?.close)}${runningCandles[tf] ? " (Preview Only)" : ""}`).join(" • ");
   el.innerHTML = `
     <span><strong>Data Source:</strong> Repo + Binance Runtime</span>
     <span><strong>Last Binance Update:</strong> ${lastUpdate}</span>
@@ -366,12 +366,22 @@ function renderBinanceDebug() {
   el.innerHTML = `<div class="debug-title">Binance Debug</div>${rows}`;
 }
 
+function getGlobalLatestPrice() {
+  if (runningCandles["1H"]?.close) return { price: runningCandles["1H"].close, source: "Running 1H" };
+  if (marketData["1H"]?.length) return { price: marketData["1H"].at(-1).close, source: "Closed 1H" };
+  if (runningCandles["4H"]?.close) return { price: runningCandles["4H"].close, source: "Running 4H" };
+  if (marketData["4H"]?.length) return { price: marketData["4H"].at(-1).close, source: "Closed 4H" };
+  if (marketData["1D"]?.length) return { price: marketData["1D"].at(-1).close, source: "Closed 1D" };
+  if (marketData["1W"]?.length) return { price: marketData["1W"].at(-1).close, source: "Closed 1W" };
+  return { price: null, source: "—" };
+}
+
 function renderSummary() {
-  const lastActive = getLast(getActiveTimeframe());
+  const latest = getGlobalLatestPrice();
   const oneHour = marketData["1H"];
   const oneHourTiming = oneHour.length > 1 && oneHour.at(-1).close > oneHour.at(-2).close ? "Early Up" : oneHour.length > 1 ? "Early Down" : "Neutral";
   const summary = {
-    "Current Price": fmtPrice(lastActive?.close),
+    "Latest BTC Price": `${fmtPrice(latest.price)}<small>Source: ${latest.source}</small>`,
     "Weekly Bias": simpleTrend("1W", "Bullish", "Bearish"),
     "Daily Context": simpleTrend("1D", "Confirm", "Warning"),
     "4H Setup": simpleTrend("4H", "Valid", "Weak"),
@@ -403,7 +413,7 @@ function chart(title, timeframe, candles, strip = []) {
   return `${strip.length ? `<div class="context-strip">${strip.map(metric).join('')}</div>` : ''}
   ${rangeSelector(getActiveConfig())}
   <div class="chart-panel tradingview-panel">
-    <div class="chart-title"><h2>${title}</h2><p>Candles loaded: ${allCount} • Visible candles: ${candles.length} • Last close: ${fmtPrice(last?.close)}</p></div>
+    <div class="chart-title"><h2>${title}</h2><p>Candles loaded: ${allCount} • Visible candles: ${candles.length} • Active TF last close: ${fmtPrice(last?.close)}</p></div>
     <div id="main-chart" class="trading-chart" aria-label="TradingView-style candlestick chart"></div>
     <div class="fvg-overlay ${activeLayers.FVG ? '' : 'is-hidden'}"><span>FVG Zone</span></div>
     <div class="chart-watermark">${timeframe} • BTCUSDT</div>
@@ -571,10 +581,11 @@ function renderDetail() {
   const el = qs('#detail-content');
   const grid = (items, cls='detail-grid') => `<div class="${cls}">${items.map(([a,b]) => card(a,b)).join('')}</div>`;
   const last = getLast(getActiveTimeframe());
+  const latest = getGlobalLatestPrice();
   const data = {
     'Indicator': `<div class="selector-row">${['Volume','RSI','MACD','ATR','Volatility','Structure'].map(metric).join('')}</div>${grid([['Volume Status', last ? 'Loaded' : 'Waiting Data'],['Last Volume', fmtVolume(last?.volume)],['RSI','Placeholder'],['ATR','Placeholder'],['Volatility','Placeholder']], 'detail-grid six')}<div class="mini-chart"></div>`,
     'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position','Placeholder'],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>`,
-    'Scenario Plan': `<h2>Multi-Scenario Planning</h2><p class="subtitle">Read-only planning context • not financial advice or a direct trading signal.</p><div class="chip-row">${['Bullish 8/10','Breakout 6/10','Wait 5/10','Bearish 4/10','Breakdown 2/10'].map((x,i)=>`<span class="chip ${i===0?'active':''}">${x}</span>`).join('')}</div><article class="card"><h2>Top Scenario: Bullish — 8/10</h2><div class="scenario-card">${[['Current Price',fmtPrice(last?.close)],['Watch Area','103,800 – 104,500'],['SL / Invalid','101,200'],['TP1','106,800'],['TP2','110,200'],['TP3','114,500'],['RR','1.2R / 2.4R / 3.6R'],['Status','Waiting Confirmation']].map(([a,b])=>`<div><span class="card-label">${a}</span><div class="card-value">${b}</div></div>`).join('')}</div></article>${grid([['Reason','Weekly HH-HL valid'],['Reason','4H bullish FVG active'],['Reason','Near support/channel'],['Risk','Invalid if close below SL']])}`,
+    'Scenario Plan': `<h2>Multi-Scenario Planning</h2><p class="subtitle">Read-only planning context • not financial advice or a direct trading signal.</p><div class="chip-row">${['Bullish 8/10','Breakout 6/10','Wait 5/10','Bearish 4/10','Breakdown 2/10'].map((x,i)=>`<span class="chip ${i===0?'active':''}">${x}</span>`).join('')}</div><article class="card"><h2>Top Scenario: Bullish — 8/10</h2><div class="scenario-card">${[['Latest BTC Price',fmtPrice(latest.price)],['Watch Area','103,800 – 104,500'],['SL / Invalid','101,200'],['TP1','106,800'],['TP2','110,200'],['TP3','114,500'],['RR','1.2R / 2.4R / 3.6R'],['Status','Waiting Confirmation']].map(([a,b])=>`<div><span class="card-label">${a}</span><div class="card-value">${b}</div></div>`).join('')}</div></article>${grid([['Reason','Weekly HH-HL valid'],['Reason','4H bullish FVG active'],['Reason','Near support/channel'],['Risk','Invalid if close below SL']])}`,
     'Structure': `${grid([['Current Bias', simpleTrend(getActiveTimeframe(), 'Bullish', 'Bearish')],['Last Swing High','Pending logic'],['Last Swing Low','Pending logic'],['Last Label','Placeholder'],['BOS / CHoCH','Pending logic'],['Structure Risk','Medium']], 'detail-grid six')}<div class="sequence">HL → HH → HL → HH</div>`,
     'FVG': grid([['Nearest FVG','TF: 4H<br>Type: Placeholder<br>Zone: Pending detection<br>Status: Pending'],['Daily FVG','Type: Placeholder<br>Zone: Pending detection<br>Status: Pending'],['D+4H Confluence','Status: Pending<br>Overlap: Pending<br>Strength: Pending']]),
     'S/R': grid([['Nearest Support','Zone: Pending detection<br>Source: Future logic<br>Distance: —'],['Nearest Resistance','Zone: Pending detection<br>Source: Future logic<br>Distance: —'],['Retest Zone','Zone: Pending detection<br>Status: Watching']]),
@@ -617,5 +628,10 @@ qs('.layer-control').addEventListener('click', (event) => {
   button.classList.toggle('active', activeLayers[layer]);
   renderWorkspace();
 });
-renderAll();
-loadAllRepoData();
+async function initDashboard() {
+  dataStatusMessage = "Loading repo/cache data...";
+  renderAll();
+  await loadAllRepoData({ runAutoUpdate: autoUpdateEnabled });
+}
+
+initDashboard();
