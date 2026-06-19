@@ -75,6 +75,31 @@ const CONFLUENCE_CONFIG = {
   proximityLabel: "Nearby"
 };
 
+const CONFLUENCE_SCORE_CONFIG = {
+  maxScore: 10,
+  weights: {
+    sourceCount: 2.0,
+    timeframeCount: 1.5,
+    overlap: 1.5,
+    proximity: 0.75,
+    structureAlignment: 1.5,
+    channelSupport: 0.75,
+    srSupport: 0.75,
+    fvgSupport: 0.75,
+    nearCurrentPrice: 0.75,
+    conflictPenalty: -2.0,
+    weakDistancePenalty: -1.0
+  },
+  distanceQualityPct: { "1W": 6.0, "1D": 3.0, "4H": 1.8, "1H": 1.0 },
+  labels: [
+    { min: 8, label: "Very Strong Context" },
+    { min: 6.5, label: "Strong Context" },
+    { min: 5, label: "Developing Context" },
+    { min: 3, label: "Weak Context" },
+    { min: 0, label: "Very Weak Context" }
+  ]
+};
+
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.config = {
   DATA_FILES,
@@ -93,5 +118,6 @@ window.BtcDash.config = {
   SR_CONFIG,
   FVG_CONFIG,
   CHANNEL_CONFIG,
-  CONFLUENCE_CONFIG
+  CONFLUENCE_CONFIG,
+  CONFLUENCE_SCORE_CONFIG
 };

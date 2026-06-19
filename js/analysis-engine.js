@@ -542,7 +542,7 @@ function makeConfluenceCandidate(zones, relation, activeTimeframe, currentPrice)
   const sourceCount = uniqueZones.length;
   const status = side === "mixed" ? "Mixed / Conflict Candidate" : sourceCount >= CONFLUENCE_CONFIG.minSourcesForStrong ? "Strong Confluence Candidate" : timeframes.length >= 2 ? "MTF Alignment" : "Confluence Candidate";
   const labels = uniqueZones.map((zone) => zone.label).slice(0, 4);
-  return { id: `confluence-${activeTimeframe}-${labels.join("-").replace(/\W+/g, "-")}`, label: labels.join(" + "), side, lower, upper, midpoint, distancePct: distanceToZonePct({ lower, upper }, currentPrice), relation, sourceCount, timeframes, sourceTypes, zones: uniqueZones, status, note: `${relation}: ${labels.join(" aligns with ")}. For planning context only.` };
+  return { id: `confluence-${activeTimeframe}-${labels.join("-").replace(/\W+/g, "-")}`, label: labels.join(" + "), side, lower, upper, midpoint, distancePct: distanceToZonePct({ lower, upper }, currentPrice), relation, sourceCount, timeframes, sourceTypes, zones: uniqueZones, status, note: `${relation}: ${labels.join(" aligns with ")}. For planning context only.`, score: 0, scoreLabel: "Very Weak Context", scoreFactors: [], scoreNotes: [], riskFlags: [] };
 }
 
 function buildConfluenceCandidates(activeTimeframe) {
@@ -568,14 +568,67 @@ function buildConfluenceCandidates(activeTimeframe) {
   return { available: true, activeTimeframe, candidates, strongestCandidate: null, upsideCandidates: [], downsideCandidates: [], mixedCandidates: [], summary: `${candidates.length} confluence candidates detected` };
 }
 
+
+function getConfluenceScoreLabel(score) {
+  return (CONFLUENCE_SCORE_CONFIG.labels.find((item) => score >= item.min) ?? CONFLUENCE_SCORE_CONFIG.labels.at(-1)).label;
+}
+
+function deriveConfluenceScore(candidate, activeTimeframe) {
+  const cfg = CONFLUENCE_SCORE_CONFIG;
+  const weights = cfg.weights;
+  let score = 0;
+  const factors = [];
+  const notes = [];
+  const riskFlags = [];
+  if (candidate.sourceCount >= 4) { score += 2.5; factors.push(`${candidate.sourceCount} aligned zone sources`); }
+  else if (candidate.sourceCount >= 3) { score += weights.sourceCount; factors.push("3 aligned zone sources"); }
+  else if (candidate.sourceCount >= 2) { score += 1; factors.push("2 aligned zone sources"); }
+
+  if (candidate.timeframes.length >= 3) { score += weights.timeframeCount; factors.push("3+ timeframe alignment"); }
+  else if (candidate.timeframes.length === 2) { score += 1.25; factors.push(`${candidate.timeframes.join(" + ")} alignment`); }
+  else if (candidate.timeframes.length === 1) { score += 0.5; factors.push(`${candidate.timeframes[0]} local alignment`); }
+
+  if (candidate.relation === CONFLUENCE_CONFIG.overlapBonusLabel) { score += weights.overlap; factors.push("Zone overlap"); }
+  else { score += weights.proximity; factors.push("Zones nearby"); }
+
+  const structure = structureContexts[activeTimeframe];
+  const bias = structure?.bias ?? "Unclear";
+  const alignedWithStructure = (candidate.side === "downside" && (bias === "Bullish" || bias === "Range")) || (candidate.side === "upside" && (bias === "Bearish" || bias === "Range"));
+  if (alignedWithStructure) { score += weights.structureAlignment; factors.push(`${bias} structure context alignment`); }
+  else if (bias === "Mixed" || bias === "Unclear") { score += 0.75; notes.push(`${bias} structure gives limited confirmation`); }
+  else if (candidate.side !== "mixed") { score -= 1; riskFlags.push(`Candidate conflicts with ${bias} structure`); }
+
+  let sourceTypeBonus = 0;
+  if (candidate.sourceTypes.includes("sr") || candidate.sourceTypes.includes("support") || candidate.sourceTypes.includes("resistance")) { sourceTypeBonus += weights.srSupport; factors.push("S/R source present"); }
+  if (candidate.sourceTypes.includes("fvg")) { sourceTypeBonus += weights.fvgSupport; factors.push("FVG source present"); }
+  if (candidate.sourceTypes.includes("channel")) { sourceTypeBonus += weights.channelSupport; factors.push("Channel source present"); }
+  score += Math.min(2, sourceTypeBonus);
+
+  const distanceLimit = cfg.distanceQualityPct[activeTimeframe] ?? 1;
+  if (Number.isFinite(candidate.distancePct)) {
+    if (candidate.distancePct === 0) { score += weights.nearCurrentPrice; notes.push("Price is inside candidate zone"); }
+    else if (candidate.distancePct <= distanceLimit) { score += weights.nearCurrentPrice; factors.push("Candidate is near current closed price"); }
+    else { score += weights.weakDistancePenalty; riskFlags.push(`Candidate is farther than ${distanceLimit}% quality range`); }
+  }
+
+  if (candidate.status === "Mixed / Conflict Candidate") {
+    score += weights.conflictPenalty;
+    riskFlags.push("Mixed source direction");
+  }
+  score = Math.max(0, Math.min(cfg.maxScore, Number(score.toFixed(1))));
+  return { score, scoreLabel: getConfluenceScoreLabel(score), scoreFactors: factors, scoreNotes: notes, riskFlags };
+}
+
 function buildConfluenceContext(activeTimeframe) {
   const context = buildConfluenceCandidates(activeTimeframe);
   if (!context.available) return context;
-  const sorted = (context.candidates || []).slice().sort((a, b) => {
+  const enriched = (context.candidates || []).map((candidate) => ({ ...candidate, ...deriveConfluenceScore(candidate, activeTimeframe) }));
+  const sorted = enriched.slice().sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
     if (b.sourceCount !== a.sourceCount) return b.sourceCount - a.sourceCount;
     return (a.distancePct ?? 999) - (b.distancePct ?? 999);
   }).slice(0, CONFLUENCE_CONFIG.maxCandidates);
-  return { ...context, candidates: sorted, strongestCandidate: sorted[0] || null, upsideCandidates: sorted.filter((candidate) => candidate.side === "upside").slice(0, 3), downsideCandidates: sorted.filter((candidate) => candidate.side === "downside").slice(0, 3), mixedCandidates: sorted.filter((candidate) => candidate.side === "mixed").slice(0, 3), summary: sorted[0] ? `${sorted[0].status}: ${sorted[0].label}` : "No confluence candidate detected" };
+  return { ...context, candidates: sorted, strongestCandidate: sorted[0] || null, upsideCandidates: sorted.filter((candidate) => candidate.side === "upside").slice(0, 3), downsideCandidates: sorted.filter((candidate) => candidate.side === "downside").slice(0, 3), mixedCandidates: sorted.filter((candidate) => candidate.side === "mixed").slice(0, 3), summary: sorted[0] ? `${sorted[0].scoreLabel} ${sorted[0].score}/10: ${sorted[0].label}` : "No confluence candidate detected" };
 }
 
 function rebuildConfluenceContext(activeTimeframe) {
@@ -626,5 +679,7 @@ window.BtcDash.analysis = {
   classifyConfluenceSide,
   buildConfluenceCandidates,
   buildConfluenceContext,
-  rebuildConfluenceContext
+  rebuildConfluenceContext,
+  getConfluenceScoreLabel,
+  deriveConfluenceScore
 };

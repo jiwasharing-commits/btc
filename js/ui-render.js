@@ -68,7 +68,7 @@ function renderSummary() {
     "1H Timing": `${oneH.bias}<small>${oneH.bosChoch.status}</small>`,
     "FVG Confluence": daily4hFvgConfluence.status === "Active Confluence" ? `Active D+4H ${daily4hFvgConfluence.type}` : daily4hFvgConfluence.status === "Conflict" ? "Conflict" : "No FVG Confluence",
     "Channel": channel.status,
-    "Confluence": confluenceContext.strongestCandidate?.status ?? "No Candidate",
+    "Confluence": confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel} ${confluenceContext.strongestCandidate.score}/10` : "No Candidate",
     "Top Scenario": "Bullish 8/10",
     "Risk": getZoneRiskLabel()
   };
@@ -137,7 +137,7 @@ function getCurrentChannelReactionZone() {
 function getZoneConfluenceNote(zone) {
   if (!zone || !confluenceContext?.candidates?.length) return zone?.note ?? "—";
   const match = confluenceContext.candidates.find((candidate) => zone.midpoint >= candidate.lower && zone.midpoint <= candidate.upper);
-  return match ? match.status : (zone.note ?? "—");
+  return match ? `Confluence Candidate · Score ${match.score}/10` : (zone.note ?? "—");
 }
 
 function renderMarketZonesCards() {
@@ -235,7 +235,9 @@ function renderConfluenceCandidateCard(title, candidate) {
     return `<article class="confluence-card"><div class="card-label">${title}</div><div class="confluence-zone-value">No confluence candidate detected</div><div class="confluence-note">For planning context only.</div></article>`;
   }
   const sources = candidate.zones.map((zone) => `${zone.timeframe} ${zone.label}`).join(', ');
-  return `<article class="confluence-card"><div class="card-label">${title}</div><span class="confluence-badge ${confluenceBadgeClass(candidate.status)}">${candidate.status}</span><div class="confluence-zone-value">Zone: ${formatZone(candidate)}<br>Distance: ${formatDistance(candidate.distancePct)}<br>Relation: ${candidate.relation}</div><div class="confluence-source-list">Sources: ${sources}</div><div class="confluence-note">${candidate.note}</div></article>`;
+  const factors = candidate.scoreFactors?.slice(0, 3).map((factor) => `<li>${factor}</li>`).join('') || '<li>No score factors available</li>';
+  const risks = candidate.riskFlags?.length ? `<ul class="confluence-risk-list">${candidate.riskFlags.slice(0, 3).map((risk) => `<li>${risk}</li>`).join('')}</ul>` : '<div class="confluence-note">Risk: No major conflict flags.</div>';
+  return `<article class="confluence-card"><div class="card-label">${title}</div><span class="confluence-badge ${confluenceBadgeClass(candidate.status)}">${candidate.status}</span><div class="confluence-score"><span class="confluence-score-value">${candidate.score}/10</span><span class="confluence-score-label">${candidate.scoreLabel}</span></div><div class="confluence-zone-value">Zone: ${formatZone(candidate)}<br>Distance: ${formatDistance(candidate.distancePct)}<br>Relation: ${candidate.relation}</div><div class="confluence-source-list">Sources: ${sources}</div><ul class="confluence-factor-list">${factors}</ul>${risks}<div class="confluence-note">${candidate.note}</div></article>`;
 }
 
 function renderConfluenceTab() {
@@ -256,7 +258,7 @@ function renderDetail() {
   const latest = getGlobalLatestPrice();
   const data = {
     'Indicator': `<div class="selector-row">${['Volume','RSI','MACD','ATR','Volatility','Structure'].map(metric).join('')}</div>${grid([['Volume Status', last ? 'Loaded' : 'Waiting Data'],['Last Volume', fmtVolume(last?.volume)],['RSI','Placeholder'],['ATR','Placeholder'],['Volatility','Placeholder']], 'detail-grid six')}<div class="mini-chart"></div>`,
-    'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position', (channelContexts[getActiveTimeframe()] ?? createEmptyChannelContext(getActiveTimeframe())).status],['Confluence', confluenceContext.strongestCandidate?.status ?? 'No Candidate'],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>${renderMarketZonesCards()}`,
+    'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position', (channelContexts[getActiveTimeframe()] ?? createEmptyChannelContext(getActiveTimeframe())).status],['Confluence', confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel} ${confluenceContext.strongestCandidate.score}/10` : 'No Candidate'],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>${renderMarketZonesCards()}`,
     'Scenario Plan': `<h2>Multi-Scenario Planning</h2><p class="subtitle">Read-only planning context • not financial advice or a direct trading signal.</p><div class="chip-row">${['Bullish 8/10','Breakout 6/10','Wait 5/10','Bearish 4/10','Breakdown 2/10'].map((x,i)=>`<span class="chip ${i===0?'active':''}">${x}</span>`).join('')}</div><article class="card"><h2>Top Scenario: Bullish — 8/10</h2><div class="scenario-card">${[['Latest BTC Price',fmtPrice(latest.price)],['Watch Area','103,800 – 104,500'],['SL / Invalid','101,200'],['TP1','106,800'],['TP2','110,200'],['TP3','114,500'],['RR','1.2R / 2.4R / 3.6R'],['Status','Waiting Confirmation']].map(([a,b])=>`<div><span class="card-label">${a}</span><div class="card-value">${b}</div></div>`).join('')}</div></article>${grid([['Reason','Weekly HH-HL valid'],['Reason','4H bullish FVG active'],['Reason','Near support/channel'],['Risk','Invalid if close below SL']])}`,
     'Structure': (() => {
       const context = structureContexts[getActiveTimeframe()] ?? createEmptyStructureContext(getActiveTimeframe());
