@@ -41,6 +41,13 @@ const CACHE_META_KEY = "btcPatternDashboard.cacheMeta.v1";
 const AUTO_UPDATE_KEY = "btcPatternDashboard.autoUpdate.v1";
 const marketData = { "1W": [], "1D": [], "4H": [], "1H": [] };
 const runningCandles = { "1W": null, "1D": null, "4H": null, "1H": null };
+const STRUCTURE_CONFIG = {
+  "1W": { swingLeft: 2, swingRight: 2, minCandles: 30, maxSwings: 30, label: "Weekly Macro Structure" },
+  "1D": { swingLeft: 3, swingRight: 3, minCandles: 60, maxSwings: 40, label: "Daily Context Structure" },
+  "4H": { swingLeft: 3, swingRight: 3, minCandles: 80, maxSwings: 50, label: "4H Setup Structure" },
+  "1H": { swingLeft: 4, swingRight: 4, minCandles: 120, maxSwings: 60, label: "1H Timing Structure" }
+};
+const structureContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
 const rangeState = { "Weekly Map": "3Y", "Daily + 4H Setup": "3M", "1H Timing": "14D" };
 let activeWorkspace = "Weekly Map";
 let activeDetail = "Indicator";
@@ -160,6 +167,7 @@ async function loadAllRepoData({ runAutoUpdate = autoUpdateEnabled } = {}) {
     const repoData = await loadRepoData();
     const cachedData = loadCacheData();
     applyRepoAndCache(repoData, cachedData);
+    rebuildAllStructureContexts();
     dataStatusMessage = cachedData ? "Repo data loaded and merged with local cache." : "Repo data loaded.";
     loading = false;
     renderAll();
@@ -300,6 +308,7 @@ async function autoUpdateFromBinance() {
     renderAll();
   }
 
+  rebuildAllStructureContexts();
   const entries = Object.entries(updateSummary);
   const successEntries = entries.filter(([, result]) => !result.error);
   const totalAdded = successEntries.reduce((sum, [, result]) => sum + (result.addedClosed ?? 0), 0);
@@ -315,6 +324,103 @@ async function autoUpdateFromBinance() {
   }
 
   renderAll();
+}
+
+function createEmptyStructureContext(timeframe, reason = "Not enough data") {
+  return {
+    available: false,
+    timeframe,
+    status: "Unavailable",
+    bias: "Unclear",
+    reason,
+    swings: [],
+    labels: [],
+    sequence: [],
+    lastSwingHigh: null,
+    lastSwingLow: null,
+    bosChoch: { status: "None", direction: "Neutral", level: null, brokenAt: null, note: "No confirmed BOS/CHoCH" },
+    summary: "No clear structure detected."
+  };
+}
+
+function detectSwingPoints(candles, timeframe) {
+  const config = STRUCTURE_CONFIG[timeframe];
+  if (!config || candles.length < config.minCandles) return [];
+  const swings = [];
+  for (let index = config.swingLeft; index < candles.length - config.swingRight; index += 1) {
+    const candle = candles[index];
+    const left = candles.slice(index - config.swingLeft, index);
+    const right = candles.slice(index + 1, index + 1 + config.swingRight);
+    const isSwingHigh = left.every((c) => candle.high > c.high) && right.every((c) => candle.high > c.high);
+    const isSwingLow = left.every((c) => candle.low < c.low) && right.every((c) => candle.low < c.low);
+    if (isSwingHigh) swings.push({ type: "high", price: candle.high, time: candle.open_time, close_time: candle.close_time, index, candle });
+    if (isSwingLow) swings.push({ type: "low", price: candle.low, time: candle.open_time, close_time: candle.close_time, index, candle });
+  }
+  return swings.sort((a, b) => a.time - b.time).slice(-config.maxSwings);
+}
+
+function classifySwingLabels(swings) {
+  let previousHigh = null;
+  let previousLow = null;
+  return swings.map((swing) => {
+    let label = swing.type === "high" ? "SH" : "SL";
+    if (swing.type === "high") {
+      if (previousHigh) label = swing.price > previousHigh.price ? "HH" : swing.price < previousHigh.price ? "LH" : "EH";
+      previousHigh = swing;
+    } else {
+      if (previousLow) label = swing.price > previousLow.price ? "HL" : swing.price < previousLow.price ? "LL" : "EL";
+      previousLow = swing;
+    }
+    return { ...swing, label };
+  });
+}
+
+function deriveStructureBias(labeledSwings) {
+  if (labeledSwings.length < 4) return { bias: "Unclear", status: "Weak Structure", sequenceText: "—", note: "Not enough confirmed swings." };
+  const sequence = labeledSwings.slice(-8);
+  const sequenceText = sequence.map((swing) => swing.label).join(" → ");
+  const bullish = sequence.filter((swing) => swing.label === "HH" || swing.label === "HL").length;
+  const bearish = sequence.filter((swing) => swing.label === "LH" || swing.label === "LL").length;
+  const highs = sequence.filter((swing) => swing.type === "high").map((swing) => swing.price);
+  const lows = sequence.filter((swing) => swing.type === "low").map((swing) => swing.price);
+  const rangePct = highs.length && lows.length ? ((Math.max(...highs) - Math.min(...lows)) / Math.max(...highs)) * 100 : 100;
+  if (rangePct < 8 && Math.abs(bullish - bearish) <= 1) return { bias: "Range", status: "Range Structure", sequenceText, note: "Recent swings remain compressed in a range." };
+  if (bullish >= 4 && bullish > bearish + 1) return { bias: "Bullish", status: "Bullish Structure", sequenceText, note: "HH/HL labels dominate recent structure." };
+  if (bearish >= 4 && bearish > bullish + 1) return { bias: "Bearish", status: "Bearish Structure", sequenceText, note: "LH/LL labels dominate recent structure." };
+  return { bias: "Mixed", status: "Mixed Structure", sequenceText, note: "Recent structure has mixed swing labels." };
+}
+
+function deriveBosChoch(candles, labeledSwings, bias) {
+  const lastClosed = candles.at(-1);
+  const lastSwingHigh = [...labeledSwings].reverse().find((swing) => swing.type === "high");
+  const lastSwingLow = [...labeledSwings].reverse().find((swing) => swing.type === "low");
+  if (!lastClosed || !lastSwingHigh || !lastSwingLow) return { status: "None", direction: "Neutral", level: null, brokenAt: null, note: "No confirmed BOS/CHoCH" };
+  if (lastClosed.close > lastSwingHigh.price) return { status: bias === "Bullish" ? "BOS Up" : "CHoCH Up", direction: "Bullish", level: lastSwingHigh.price, brokenAt: lastClosed.close_time, note: "Close confirmed above last swing high." };
+  if (lastClosed.close < lastSwingLow.price) return { status: bias === "Bearish" ? "BOS Down" : "CHoCH Down", direction: "Bearish", level: lastSwingLow.price, brokenAt: lastClosed.close_time, note: "Close confirmed below last swing low." };
+  if (lastClosed.high > lastSwingHigh.price || lastClosed.low < lastSwingLow.price) return { status: "Unconfirmed Break", direction: "Neutral", level: lastClosed.high > lastSwingHigh.price ? lastSwingHigh.price : lastSwingLow.price, brokenAt: lastClosed.close_time, note: "Wick crossed a swing level, but close did not confirm." };
+  return { status: "None", direction: "Neutral", level: null, brokenAt: null, note: "No confirmed BOS/CHoCH" };
+}
+
+function buildMarketStructureContext(timeframe) {
+  const candles = marketData[timeframe] || [];
+  const config = STRUCTURE_CONFIG[timeframe];
+  if (!config || candles.length < config.minCandles) return createEmptyStructureContext(timeframe, "Not enough candles");
+  const swings = detectSwingPoints(candles, timeframe);
+  if (swings.length < 4) return createEmptyStructureContext(timeframe, "Not enough swing points");
+  const labels = classifySwingLabels(swings);
+  const biasInfo = deriveStructureBias(labels);
+  const bosChoch = deriveBosChoch(candles, labels, biasInfo.bias);
+  const lastSwingHigh = [...labels].reverse().find((swing) => swing.type === "high") ?? null;
+  const lastSwingLow = [...labels].reverse().find((swing) => swing.type === "low") ?? null;
+  return { available: true, timeframe, status: biasInfo.status, bias: biasInfo.bias, swings, labels, sequence: labels.slice(-8), lastSwingHigh, lastSwingLow, bosChoch, summary: `${STRUCTURE_CONFIG[timeframe].label}: ${biasInfo.status}. ${biasInfo.note}` };
+}
+
+function rebuildAllStructureContexts() {
+  ["1W", "1D", "4H", "1H"].forEach((timeframe) => {
+    structureContexts[timeframe] = buildMarketStructureContext(timeframe);
+    const context = structureContexts[timeframe];
+    console.info("[Market Structure]", timeframe, { bias: context.bias, status: context.status, swings: context.swings.length, lastSwingHigh: context.lastSwingHigh, lastSwingLow: context.lastSwingLow, bosChoch: context.bosChoch });
+  });
 }
 
 function getVisibleCandles(timeframe, range) {
@@ -388,12 +494,16 @@ function renderSummary() {
   const latest = getGlobalLatestPrice();
   const oneHour = marketData["1H"];
   const oneHourTiming = oneHour.length > 1 && oneHour.at(-1).close > oneHour.at(-2).close ? "Early Up" : oneHour.length > 1 ? "Early Down" : "Neutral";
+  const weekly = structureContexts["1W"] ?? createEmptyStructureContext("1W");
+  const daily = structureContexts["1D"] ?? createEmptyStructureContext("1D");
+  const fourH = structureContexts["4H"] ?? createEmptyStructureContext("4H");
+  const oneH = structureContexts["1H"] ?? createEmptyStructureContext("1H");
   const summary = {
     "Latest BTC Price": `${fmtPrice(latest.price)}<small>Source: ${latest.source}</small>`,
-    "Weekly Bias": simpleTrend("1W", "Bullish", "Bearish"),
-    "Daily Context": simpleTrend("1D", "Confirm", "Warning"),
-    "4H Setup": simpleTrend("4H", "Valid", "Weak"),
-    "1H Timing": oneHourTiming,
+    "Weekly Bias": `${weekly.bias}<small>${weekly.status}</small>`,
+    "Daily Context": `${daily.bias}<small>${daily.status}</small>`,
+    "4H Setup": `${fourH.bias}<small>${fourH.bosChoch.status}</small>`,
+    "1H Timing": `${oneH.bias}<small>${oneH.bosChoch.status}</small>`,
     "Top Scenario": "Bullish 8/10",
     "Risk": "Medium"
   };
@@ -422,7 +532,9 @@ function chart(title, timeframe, closedCandles, strip = []) {
   const hasRunningPreview = Boolean(running && closedCandles.length && running.open_time > closedCandles.at(-1).open_time);
   const countLabel = hasRunningPreview ? `${allCount} closed + 1 running preview` : `${allCount}`;
   const runningLabel = hasRunningPreview ? ` • Running preview: ${fmtPrice(running.close)}` : '';
-  return `${strip.length ? `<div class="context-strip">${strip.map(metric).join('')}</div>` : ''}
+  const dailyContext = activeWorkspace === 'Daily + 4H Setup' ? (structureContexts['1D'] ?? createEmptyStructureContext('1D')) : null;
+  const stripItems = dailyContext ? [`Daily Bias: ${dailyContext.bias}`, `Daily Structure: ${dailyContext.status}`, `Daily BOS/CHoCH: ${dailyContext.bosChoch.status}`, ...strip.slice(3)] : strip;
+  return `${stripItems.length ? `<div class="context-strip">${stripItems.map(metric).join('')}</div>` : ''}
   ${rangeSelector(getActiveConfig())}
   <div class="chart-panel tradingview-panel">
     <div class="chart-title"><h2>${title}</h2><p>Candles loaded: ${countLabel} • Visible closed: ${closedCandles.length} • Active TF last closed: ${fmtPrice(lastClosed?.close)}${runningLabel}</p></div>
@@ -480,27 +592,20 @@ function addDummyPriceLines(closedCandles, running) {
 function addDummyMarkers(closedCandles, running, timeframe) {
   if (!candleSeries) return;
   const markers = [];
-  if (!activeLayers.Structure || closedCandles.length < 8) {
-    if (running && closedCandles.length && running.open_time > closedCandles.at(-1).open_time) {
-      markers.push({ time: Math.floor(running.open_time / 1000), position: "aboveBar", color: "#facc15", shape: "circle", text: `Running ${timeframe.replace("1", "")}` });
-    }
-    candleSeries.setMarkers(markers);
-    return;
+  const firstVisibleTime = closedCandles[0]?.open_time ?? 0;
+  const context = structureContexts[timeframe];
+  if (activeLayers.Structure && context?.available) {
+    markers.push(...context.labels
+      .filter((label) => label.time >= firstVisibleTime)
+      .slice(-28)
+      .map((label) => ({
+        time: Math.floor(label.time / 1000),
+        position: label.type === "high" ? "aboveBar" : "belowBar",
+        color: label.type === "high" ? "#38bdf8" : "#facc15",
+        shape: label.type === "high" ? "arrowDown" : "arrowUp",
+        text: label.label
+      })));
   }
-  const labels = ["HL", "HH", "HL", "LH", "LL", "HH"];
-  const start = Math.max(0, closedCandles.length - 72);
-  const step = Math.max(5, Math.floor((closedCandles.length - start) / labels.length));
-  markers.push(...labels.map((label, index) => {
-    const candle = closedCandles[Math.min(closedCandles.length - 1, start + index * step)];
-    const above = label === "HH" || label === "LH";
-    return {
-      time: Math.floor(candle.open_time / 1000),
-      position: above ? "aboveBar" : "belowBar",
-      color: above ? "#38bdf8" : "#a78bfa",
-      shape: above ? "arrowDown" : "arrowUp",
-      text: label
-    };
-  }));
   if (running && closedCandles.length && running.open_time > closedCandles.at(-1).open_time) {
     markers.push({ time: Math.floor(running.open_time / 1000), position: "aboveBar", color: "#facc15", shape: "circle", text: `Running ${timeframe === "1W" ? "W" : timeframe}` });
   }
@@ -592,7 +697,8 @@ function renderWorkspace() {
     clearTradingChart();
     el.innerHTML = `<div class="mtf-grid">${["1W", "1D", "4H", "1H"].map((tf) => {
       const candles = marketData[tf];
-      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>First date: ${fmtDate(candles[0])}<br>Last date: ${fmtDate(candles.at(-1))}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>Simple status: ${mtfStatus(tf)}`);
+      const structure = structureContexts[tf] ?? createEmptyStructureContext(tf);
+      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>${structure.status}<br>BOS/CHoCH: ${structure.bosChoch.status}<br>Sequence: ${formatStructureSequence(structure)}`);
     }).join('')}</div>`;
     return;
   }
@@ -613,6 +719,17 @@ function renderTable() {
   }).join('') || `<tr><td colspan="7">No candle data loaded for this workspace/range.</td></tr>`}</tbody></table></div>`;
 }
 
+function formatStructureSequence(context) {
+  return context?.sequence?.length ? context.sequence.map((swing) => swing.label).join(" → ") : "No clear structure detected";
+}
+
+function renderMtfStructureCards() {
+  return `<div class="structure-card-grid">${["1W", "1D", "4H", "1H"].map((timeframe) => {
+    const context = structureContexts[timeframe] ?? createEmptyStructureContext(timeframe);
+    return `<article class="structure-card"><div class="card-label">${timeframe === "1W" ? "Weekly" : timeframe === "1D" ? "Daily" : timeframe}</div><span class="structure-badge ${context.bias.toLowerCase()}">${context.bias}</span><div class="structure-note">${context.status} • ${context.bosChoch.status}</div><div class="structure-sequence">${formatStructureSequence(context)}</div></article>`;
+  }).join('')}</div>`;
+}
+
 function renderDetail() {
   const el = qs('#detail-content');
   const grid = (items, cls='detail-grid') => `<div class="${cls}">${items.map(([a,b]) => card(a,b)).join('')}</div>`;
@@ -622,7 +739,10 @@ function renderDetail() {
     'Indicator': `<div class="selector-row">${['Volume','RSI','MACD','ATR','Volatility','Structure'].map(metric).join('')}</div>${grid([['Volume Status', last ? 'Loaded' : 'Waiting Data'],['Last Volume', fmtVolume(last?.volume)],['RSI','Placeholder'],['ATR','Placeholder'],['Volatility','Placeholder']], 'detail-grid six')}<div class="mini-chart"></div>`,
     'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position','Placeholder'],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>`,
     'Scenario Plan': `<h2>Multi-Scenario Planning</h2><p class="subtitle">Read-only planning context • not financial advice or a direct trading signal.</p><div class="chip-row">${['Bullish 8/10','Breakout 6/10','Wait 5/10','Bearish 4/10','Breakdown 2/10'].map((x,i)=>`<span class="chip ${i===0?'active':''}">${x}</span>`).join('')}</div><article class="card"><h2>Top Scenario: Bullish — 8/10</h2><div class="scenario-card">${[['Latest BTC Price',fmtPrice(latest.price)],['Watch Area','103,800 – 104,500'],['SL / Invalid','101,200'],['TP1','106,800'],['TP2','110,200'],['TP3','114,500'],['RR','1.2R / 2.4R / 3.6R'],['Status','Waiting Confirmation']].map(([a,b])=>`<div><span class="card-label">${a}</span><div class="card-value">${b}</div></div>`).join('')}</div></article>${grid([['Reason','Weekly HH-HL valid'],['Reason','4H bullish FVG active'],['Reason','Near support/channel'],['Risk','Invalid if close below SL']])}`,
-    'Structure': `${grid([['Current Bias', simpleTrend(getActiveTimeframe(), 'Bullish', 'Bearish')],['Last Swing High','Pending logic'],['Last Swing Low','Pending logic'],['Last Label','Placeholder'],['BOS / CHoCH','Pending logic'],['Structure Risk','Medium']], 'detail-grid six')}<div class="sequence">HL → HH → HL → HH</div>`,
+    'Structure': (() => {
+      const context = structureContexts[getActiveTimeframe()] ?? createEmptyStructureContext(getActiveTimeframe());
+      return `${grid([['Active TF Bias', context.bias],['Structure Status', context.status],['Last Swing High', fmtPrice(context.lastSwingHigh?.price)],['Last Swing Low', fmtPrice(context.lastSwingLow?.price)],['BOS / CHoCH', context.bosChoch.status],['Sequence', formatStructureSequence(context)]], 'detail-grid six')}<div class="structure-note card">${context.summary}</div>${renderMtfStructureCards()}`;
+    })(),
     'FVG': grid([['Nearest FVG','TF: 4H<br>Type: Placeholder<br>Zone: Pending detection<br>Status: Pending'],['Daily FVG','Type: Placeholder<br>Zone: Pending detection<br>Status: Pending'],['D+4H Confluence','Status: Pending<br>Overlap: Pending<br>Strength: Pending']]),
     'S/R': grid([['Nearest Support','Zone: Pending detection<br>Source: Future logic<br>Distance: —'],['Nearest Resistance','Zone: Pending detection<br>Source: Future logic<br>Distance: —'],['Retest Zone','Zone: Pending detection<br>Status: Watching']]),
     'Channel': grid([['Weekly Channel','Direction: Pending<br>Position: Pending<br>Upper: —<br>Mid: —<br>Lower: —'],['Daily Channel','Direction: Pending<br>Status: No clear breakout'],['4H Channel','Direction: Pending<br>Position: Pending<br>Status: Pending']]),
