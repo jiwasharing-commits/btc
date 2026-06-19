@@ -710,7 +710,7 @@ function buildBreakdownScenario(snapshot) {
 function buildWaitScenario(snapshot, otherScenarios) {
   const bestDirectional = Math.max(...otherScenarios.map((scenario) => scenario.confluenceCandidate?.score || 0), 0);
   const mixed = snapshot.structure?.bias === "Mixed" || snapshot.structure?.bias === "Unclear" || snapshot.confluence?.mixedCandidates?.length;
-  return makeScenarioBase("wait", { available: true, status: "Waiting for clearer scenario context", direction: "neutral", referenceZone: null, confluenceCandidate: snapshot.confluence?.strongestCandidate || null, structureAlignment: mixed ? "neutral" : "aligned", reasons: [bestDirectional < 5 ? "No high-quality scenario context" : "Directional scenarios need confirmation", mixed ? "Structure or confluence is mixed" : "Waiting for confirmation near key zones", "Better wait for confirmation"], riskNotes: ["Not a trading signal", "SL/TP pending Patch 8"], confirmationNeeds: ["Wait for cleaner structure/confluence confirmation"], summary: "Wait scenario context for review only" });
+  return makeScenarioBase("wait", { available: true, status: "Waiting for clearer scenario context", direction: "neutral", referenceZone: null, confluenceCandidate: snapshot.confluence?.strongestCandidate || null, structureAlignment: mixed ? "neutral" : "aligned", reasons: [bestDirectional < 5 ? "No high-quality scenario context" : "Directional scenarios need confirmation", mixed ? "Structure or confluence is mixed" : "Waiting for confirmation near key zones", "Better wait for confirmation"], riskNotes: ["No execution instruction", "Directional risk references unavailable for wait scenario"], confirmationNeeds: ["Wait for cleaner structure/confluence confirmation"], summary: "Wait scenario context for review only" });
 }
 
 
@@ -833,7 +833,7 @@ function deriveScenarioPlanningScore(scenario, snapshot) {
   const bullishConfirm = scenario.direction === "bullish" && (bos === "BOS Up" || bos === "CHoCH Up");
   const bearishConfirm = scenario.direction === "bearish" && (bos === "BOS Down" || bos === "CHoCH Down");
   if (bullishConfirm || bearishConfirm) score += 1;
-  const heavyRisks = scenario.riskNotes.filter((note) => /failure|conflict|not a trading signal/i.test(note)).length;
+  const heavyRisks = scenario.riskNotes.filter((note) => /failure|conflict|no execution instruction/i.test(note)).length;
   score -= Math.min(2, heavyRisks * 0.5);
   if (scenario.riskPlan && !scenario.riskPlan.available && scenario.type !== "wait") score -= 0.75;
   if (!scenario.available && scenario.type !== "wait") score = 0;
@@ -878,6 +878,182 @@ function rebuildScenarioContext(activeTimeframe) {
   scenarioContext = buildScenarioContext(tf);
   console.info("[Scenario Context]", { activeTimeframe: tf, primaryScenario: scenarioContext.primaryScenario, scenarios: scenarioContext.scenarios?.length || 0 });
   return scenarioContext;
+}
+
+function createEmptyReactionStudyContext(reason = "Reaction study not available") {
+  return { available: false, activeTimeframe: null, studiedZones: [], strongestReaction: null, supportReactions: [], resistanceReactions: [], fvgReactions: [], channelReactions: [], watchAreaReaction: null, summary: reason };
+}
+
+function normalizeReactionStudyZone(zone, zoneType, timeframe, direction = null) {
+  if (!zone) return null;
+  const lower = Number(zone.lower ?? zone.zoneLower ?? zone.level);
+  const upper = Number(zone.upper ?? zone.zoneUpper ?? zone.level);
+  const midpoint = Number(zone.midpoint ?? zone.level ?? ((lower + upper) / 2));
+  if (![lower, upper, midpoint].every(Number.isFinite)) return null;
+  if (zone.status === "Filled") return null;
+  const normalizedType = zoneType || zone.zoneType || zone.type || "mixed";
+  const inferredDirection = direction
+    || (normalizedType === "support" || zone.type === "bullish" || zone.label?.toLowerCase().includes("lower") ? "supportive" : null)
+    || (normalizedType === "resistance" || zone.type === "bearish" || zone.label?.toLowerCase().includes("upper") ? "resistive" : "mixed");
+  return {
+    id: zone.id || `${timeframe}-${normalizedType}-${lower}-${upper}`,
+    label: zone.label || `${timeframe} ${normalizedType}`,
+    zoneType: normalizedType,
+    direction: inferredDirection,
+    timeframe,
+    lower: Math.min(lower, upper),
+    upper: Math.max(lower, upper),
+    midpoint,
+    source: zone.source || normalizedType,
+    status: zone.status || "active",
+    note: zone.note || ""
+  };
+}
+
+function collectReactionStudyZones(activeTimeframe) {
+  const zones = [];
+  const add = (zone, zoneType, timeframe = activeTimeframe, direction = null) => {
+    const normalized = normalizeReactionStudyZone(zone, zoneType, timeframe, direction);
+    if (normalized && !zones.some((item) => Math.abs(item.midpoint - normalized.midpoint) / normalized.midpoint < 0.001 && item.zoneType === normalized.zoneType)) zones.push(normalized);
+  };
+  (marketZonesContext?.upside || []).forEach((zone) => add(zone, zone.zoneType, zone.timeframe, "resistive"));
+  (marketZonesContext?.downside || []).forEach((zone) => add(zone, zone.zoneType, zone.timeframe, "supportive"));
+  const sr = srContexts[activeTimeframe];
+  add(sr?.nearestSupport, "support", activeTimeframe, "supportive");
+  add(sr?.nearestResistance, "resistance", activeTimeframe, "resistive");
+  add(sr?.strongestSupport, "support", activeTimeframe, "supportive");
+  add(sr?.strongestResistance, "resistance", activeTimeframe, "resistive");
+  (sr?.supportZones || []).slice(0, 3).forEach((zone) => add(zone, "support", activeTimeframe, "supportive"));
+  (sr?.resistanceZones || []).slice(0, 3).forEach((zone) => add(zone, "resistance", activeTimeframe, "resistive"));
+  const fvg = fvgContexts[activeTimeframe];
+  [...(fvg?.activeFvgs || []), fvg?.nearestFvg, fvg?.nearestBullishFvg, fvg?.nearestBearishFvg].forEach((zone) => {
+    if (zone?.status !== "Filled") add(zone, "fvg", activeTimeframe, zone?.type === "bearish" ? "resistive" : zone?.type === "bullish" ? "supportive" : "mixed");
+  });
+  const channel = channelContexts[activeTimeframe];
+  if (channel?.available && channel.projectedLevels) {
+    const width = channel.projectedLevels.mid * 0.0025;
+    add({ label: `${activeTimeframe} Channel Upper`, lower: channel.projectedLevels.upper - width, upper: channel.projectedLevels.upper + width, midpoint: channel.projectedLevels.upper, source: "channel" }, "channel", activeTimeframe, "resistive");
+    add({ label: `${activeTimeframe} Channel Midline`, lower: channel.projectedLevels.mid - width, upper: channel.projectedLevels.mid + width, midpoint: channel.projectedLevels.mid, source: "channel" }, "channel", activeTimeframe, "mixed");
+    add({ label: `${activeTimeframe} Channel Lower`, lower: channel.projectedLevels.lower - width, upper: channel.projectedLevels.lower + width, midpoint: channel.projectedLevels.lower, source: "channel" }, "channel", activeTimeframe, "supportive");
+  }
+  add(confluenceContext?.strongestCandidate, "confluence", activeTimeframe, confluenceContext?.strongestCandidate?.side === "upside" ? "resistive" : confluenceContext?.strongestCandidate?.side === "downside" ? "supportive" : "mixed");
+  add(scenarioContext?.primaryScenario?.riskPlan?.watchArea, "watchArea", activeTimeframe, getScenarioDirection(scenarioContext?.primaryScenario) === "bearish" ? "resistive" : getScenarioDirection(scenarioContext?.primaryScenario) === "bullish" ? "supportive" : "mixed");
+  return zones.slice(0, REACTION_STUDY_CONFIG.maxZonesToStudy);
+}
+
+function isCandleTouchingZone(candle, zone, timeframe) {
+  const tolerancePct = REACTION_STUDY_CONFIG.touchTolerancePct[timeframe] || 1;
+  const midpoint = zone.midpoint || ((zone.lower + zone.upper) / 2);
+  const distancePct = Math.min(Math.abs(candle.close - midpoint), Math.abs(candle.high - midpoint), Math.abs(candle.low - midpoint)) / midpoint * 100;
+  const overlaps = candle.high >= zone.lower && candle.low <= zone.upper;
+  const bodyTouches = Math.max(candle.open, candle.close) >= zone.lower && Math.min(candle.open, candle.close) <= zone.upper;
+  if (!overlaps && distancePct > tolerancePct) return { touched: false, touchType: "none", distancePct };
+  return { touched: true, touchType: bodyTouches ? "body" : overlaps ? "wick" : Math.abs(candle.close - midpoint) / midpoint * 100 <= tolerancePct ? "close" : "near", distancePct };
+}
+
+function classifyReactionOutcome(zone, touchIndex, candles, timeframe) {
+  const windowSize = REACTION_STUDY_CONFIG.reactionWindowCandles[timeframe] || 12;
+  const threshold = REACTION_STUDY_CONFIG.bounceThresholdPct[timeframe] || 1;
+  const breakPct = REACTION_STUDY_CONFIG.breakConfirmPct[timeframe] || 0.5;
+  const touch = candles[touchIndex];
+  const after = candles.slice(touchIndex + 1, touchIndex + 1 + windowSize);
+  if (!touch || !after.length) return { outcome: "No Clear Reaction", direction: "neutral", maxMovePct: 0, adverseMovePct: 0, reactionCandles: 0, note: "Not enough candles after touch." };
+  const highest = Math.max(...after.map((candle) => candle.high));
+  const lowest = Math.min(...after.map((candle) => candle.low));
+  const closeAbove = after.some((candle) => candle.close > zone.upper * (1 + breakPct / 100));
+  const closeBelow = after.some((candle) => candle.close < zone.lower * (1 - breakPct / 100));
+  const upMovePct = ((highest - zone.midpoint) / zone.midpoint) * 100;
+  const downMovePct = ((zone.midpoint - lowest) / zone.midpoint) * 100;
+  let outcome = "Weak Reaction";
+  let direction = "neutral";
+  let note = "No clear follow-through after zone touch.";
+  if (zone.zoneType === "fvg") {
+    if ((zone.direction === "supportive" && lowest <= zone.lower) || (zone.direction === "resistive" && highest >= zone.upper)) outcome = "Filled FVG";
+    else if ((zone.direction === "supportive" && lowest <= zone.upper) || (zone.direction === "resistive" && highest >= zone.lower)) outcome = "Partial Fill";
+    else outcome = "Rejected From FVG";
+    direction = zone.direction === "supportive" ? "bullish" : zone.direction === "resistive" ? "bearish" : "neutral";
+    note = "FVG interaction classified from closed-candle lookahead.";
+  } else if (zone.zoneType === "channel") {
+    if ((zone.direction === "supportive" && closeBelow) || (zone.direction === "resistive" && closeAbove)) outcome = "Broke Channel";
+    else if ((zone.direction === "supportive" && upMovePct >= threshold) || (zone.direction === "resistive" && downMovePct >= threshold)) outcome = "Rejected From Boundary";
+    else outcome = "No Clear Reaction";
+    direction = zone.direction === "supportive" ? "bullish" : zone.direction === "resistive" ? "bearish" : "neutral";
+    note = "Channel boundary reaction measured from historical touches.";
+  } else if (zone.direction === "supportive") {
+    if (upMovePct >= threshold) [outcome, direction, note] = ["Bounce", "bullish", "Supportive zone produced a historical bounce."];
+    else if (closeBelow) [outcome, direction, note] = ["Breakdown", "bearish", "Closed below supportive zone after touch."];
+  } else if (zone.direction === "resistive") {
+    if (downMovePct >= threshold) [outcome, direction, note] = ["Rejection", "bearish", "Resistive zone produced a historical rejection."];
+    else if (closeAbove) [outcome, direction, note] = ["Breakout", "bullish", "Closed above resistive zone after touch."];
+  }
+  return { outcome, direction, maxMovePct: Number(Math.max(upMovePct, downMovePct).toFixed(2)), adverseMovePct: Number((zone.direction === "supportive" ? downMovePct : upMovePct).toFixed(2)), reactionCandles: after.length, note };
+}
+
+function getReactionScoreLabel(score) {
+  const found = (REACTION_STUDY_CONFIG.labels || []).find((item) => score >= item.min);
+  return found ? found.label : "Limited Reaction Evidence";
+}
+
+function deriveReactionScore(stats, zone) {
+  let score = 0;
+  const reactionNotes = [];
+  const riskFlags = [];
+  score += Math.min(2, stats.touches * 0.5);
+  score += Math.min(3, (stats.successRatePct / 100) * 3);
+  score += Math.min(2, stats.averageMovePct / 2);
+  score -= Math.min(2, stats.averageAdverseMovePct / 2);
+  score -= Math.min(2, stats.breakCount * 0.6);
+  if (stats.touches < 2) riskFlags.push("Limited historical touches");
+  if (stats.breakCount > stats.positiveCount) riskFlags.push("Break/fail events dominate");
+  if (zone.zoneType === "watchArea") reactionNotes.push("Scenario watch area reaction history.");
+  if (stats.successRatePct >= 60) reactionNotes.push("Positive historical reactions are dominant.");
+  const reactionScore = Math.max(0, Math.min(10, Number(score.toFixed(1))));
+  return { reactionScore, reactionLabel: getReactionScoreLabel(reactionScore), reactionNotes, riskFlags };
+}
+
+function studyZoneReaction(zone, candles, timeframe) {
+  const lookback = REACTION_STUDY_CONFIG.lookbackCandles[timeframe] || 300;
+  const scopedCandles = candles.slice(-lookback);
+  const events = [];
+  for (let index = 0; index < scopedCandles.length - 2; index += 1) {
+    const touch = isCandleTouchingZone(scopedCandles[index], zone, timeframe);
+    if (touch.touched) events.push({ touchIndex: index, touch, ...classifyReactionOutcome(zone, index, scopedCandles, timeframe) });
+    if (events.length >= REACTION_STUDY_CONFIG.maxEventsPerZone) break;
+  }
+  if (!events.length) return null;
+  const positiveOutcomes = ["Bounce", "Rejection", "Rejected From FVG", "Partial Fill", "Rejected From Boundary", "Reclaimed Channel"];
+  const breakOutcomes = ["Breakdown", "Breakout", "Filled FVG", "Broke Channel"];
+  const positiveCount = events.filter((event) => positiveOutcomes.includes(event.outcome)).length;
+  const breakCount = events.filter((event) => breakOutcomes.includes(event.outcome)).length;
+  const stats = {
+    touches: events.length,
+    bounceCount: events.filter((event) => event.outcome === "Bounce").length,
+    rejectionCount: events.filter((event) => event.outcome === "Rejection" || event.outcome === "Rejected From Boundary").length,
+    breakCount,
+    fillCount: events.filter((event) => event.outcome === "Filled FVG" || event.outcome === "Partial Fill").length,
+    weakCount: events.filter((event) => event.outcome === "Weak Reaction" || event.outcome === "No Clear Reaction").length,
+    positiveCount,
+    averageMovePct: Number((events.reduce((sum, event) => sum + event.maxMovePct, 0) / events.length).toFixed(2)),
+    averageAdverseMovePct: Number((events.reduce((sum, event) => sum + event.adverseMovePct, 0) / events.length).toFixed(2)),
+    successRatePct: Number(((positiveCount / events.length) * 100).toFixed(1))
+  };
+  return { ...zone, events, ...stats, ...deriveReactionScore(stats, zone) };
+}
+
+function buildReactionStudyContext(activeTimeframe) {
+  const candles = marketData[activeTimeframe] || [];
+  if (!candles.length) return createEmptyReactionStudyContext("No closed candles available");
+  const zones = collectReactionStudyZones(activeTimeframe);
+  if (!zones.length) return createEmptyReactionStudyContext("No zones available for reaction study");
+  const studiedZones = zones.map((zone) => studyZoneReaction(zone, candles, activeTimeframe)).filter(Boolean).sort((a, b) => b.reactionScore - a.reactionScore);
+  console.info("[Reaction Study]", { activeTimeframe, zones: zones.length, studied: studiedZones.length, strongest: studiedZones[0] || null });
+  return { available: Boolean(studiedZones.length), activeTimeframe, studiedZones, strongestReaction: studiedZones[0] || null, supportReactions: studiedZones.filter((x) => x.zoneType === "support").slice(0, 3), resistanceReactions: studiedZones.filter((x) => x.zoneType === "resistance").slice(0, 3), fvgReactions: studiedZones.filter((x) => x.zoneType === "fvg").slice(0, 3), channelReactions: studiedZones.filter((x) => x.zoneType === "channel").slice(0, 3), watchAreaReaction: studiedZones.find((x) => x.zoneType === "watchArea") || null, summary: studiedZones[0] ? `${studiedZones[0].label}: ${studiedZones[0].reactionScore}/10 ${studiedZones[0].reactionLabel}` : "Reaction study not available" };
+}
+
+function rebuildReactionStudyContext(activeTimeframe) {
+  const tf = activeTimeframe || getActiveTimeframe();
+  reactionStudyContext = buildReactionStudyContext(tf);
+  return reactionStudyContext;
 }
 
 window.BtcDash = window.BtcDash || {};
@@ -943,5 +1119,14 @@ window.BtcDash.analysis = {
   deriveScenarioInvalidation,
   deriveScenarioTargetLadder,
   calculateRiskReward,
-  buildScenarioRiskPlan
+  buildScenarioRiskPlan,
+  createEmptyReactionStudyContext,
+  collectReactionStudyZones,
+  isCandleTouchingZone,
+  classifyReactionOutcome,
+  studyZoneReaction,
+  getReactionScoreLabel,
+  deriveReactionScore,
+  buildReactionStudyContext,
+  rebuildReactionStudyContext
 };

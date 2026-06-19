@@ -139,6 +139,23 @@ const RISK_PLAN_CONFIG = {
   }
 };
 
+const REACTION_STUDY_CONFIG = {
+  maxEventsPerZone: 12,
+  maxZonesToStudy: 12,
+  lookbackCandles: { "1W": 180, "1D": 260, "4H": 420, "1H": 600 },
+  reactionWindowCandles: { "1W": 6, "1D": 12, "4H": 18, "1H": 24 },
+  touchTolerancePct: { "1W": 2.5, "1D": 1.4, "4H": 0.8, "1H": 0.45 },
+  bounceThresholdPct: { "1W": 5.0, "1D": 3.0, "4H": 1.6, "1H": 0.9 },
+  breakConfirmPct: { "1W": 1.2, "1D": 0.7, "4H": 0.4, "1H": 0.25 },
+  labels: [
+    { min: 8, label: "Strong Historical Reaction" },
+    { min: 6.5, label: "Good Historical Reaction" },
+    { min: 5, label: "Developing Historical Reaction" },
+    { min: 3, label: "Weak Historical Reaction" },
+    { min: 0, label: "Limited Reaction Evidence" }
+  ]
+};
+
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.config = {
   DATA_FILES,
@@ -160,5 +177,6 @@ window.BtcDash.config = {
   CONFLUENCE_CONFIG,
   CONFLUENCE_SCORE_CONFIG,
   SCENARIO_CONFIG,
-  RISK_PLAN_CONFIG
+  RISK_PLAN_CONFIG,
+  REACTION_STUDY_CONFIG
 };

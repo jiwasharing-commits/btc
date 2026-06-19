@@ -7,6 +7,7 @@ const fvgContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
 const channelContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
 let confluenceContext = { available: false, activeTimeframe: null, candidates: [], strongestCandidate: null, upsideCandidates: [], downsideCandidates: [], mixedCandidates: [], summary: "No confluence candidate detected" };
 let scenarioContext = { available: false, activeTimeframe: null, scenarios: [], primaryScenario: null, bullishScenario: null, bearishScenario: null, breakoutScenario: null, breakdownScenario: null, waitScenario: null, summary: "Scenario context not available" };
+let reactionStudyContext = { available: false, activeTimeframe: null, studiedZones: [], strongestReaction: null, supportReactions: [], resistanceReactions: [], fvgReactions: [], channelReactions: [], watchAreaReaction: null, summary: "Reaction study not available" };
 let daily4hFvgConfluence = { status: "None", type: null, overlapLower: null, overlapUpper: null, dailyFvg: null, h4Fvg: null, strength: "Moderate", note: "No FVG confluence" };
 const rangeState = { "Weekly Map": "3Y", "Daily + 4H Setup": "3M", "1H Timing": "14D" };
 let activeWorkspace = "Weekly Map";
@@ -35,6 +36,8 @@ window.BtcDash.state = {
   set confluenceContext(value) { confluenceContext = value; },
   get scenarioContext() { return scenarioContext; },
   set scenarioContext(value) { scenarioContext = value; },
+  get reactionStudyContext() { return reactionStudyContext; },
+  set reactionStudyContext(value) { reactionStudyContext = value; },
   activeLayers,
   rangeState,
   get marketZonesContext() { return marketZonesContext; },

@@ -4,6 +4,7 @@
     marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
     rebuildConfluenceContext(getActiveTimeframe());
     rebuildScenarioContext(getActiveTimeframe());
+    rebuildReactionStudyContext(getActiveTimeframe());
     renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace');
     renderSummary();
     renderWorkspace();
@@ -21,6 +22,7 @@
     marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
     rebuildConfluenceContext(getActiveTimeframe());
     rebuildScenarioContext(getActiveTimeframe());
+    rebuildReactionStudyContext(getActiveTimeframe());
     renderSummary();
     renderWorkspace();
     renderDetail();

@@ -70,6 +70,7 @@ function renderSummary() {
     "Channel": channel.status,
     "Confluence": confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel} ${confluenceContext.strongestCandidate.score}/10` : "No Candidate",
     "Top Scenario": scenarioContext.primaryScenario ? `${scenarioContext.primaryScenario.label} ${scenarioContext.primaryScenario.score}/10<small>RR ${scenarioContext.primaryScenario.riskPlan?.quality || "Unavailable"} · Planning context</small>` : "Scenario context not available",
+    "Reaction": reactionStudyContext.strongestReaction ? `${reactionStudyContext.strongestReaction.reactionLabel} ${reactionStudyContext.strongestReaction.reactionScore}/10` : "Reaction study not available",
     "Risk": getZoneRiskLabel()
   };
   qs('.summary-grid').innerHTML = Object.entries(summary).map(([k, v]) => `<article class="summary-card"><div class="card-label">${k}</div><div class="card-value">${v}</div></article>`).join('');
@@ -99,7 +100,7 @@ function renderWorkspace() {
       const sr = srContexts[tf] ?? createEmptySrContext(tf);
       const fvg = fvgContexts[tf] ?? createEmptyFvgContext(tf);
       const channel = channelContexts[tf] ?? createEmptyChannelContext(tf);
-      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>${structure.status}<br>BOS/CHoCH: ${structure.bosChoch.status}<br>S/R: Support ${formatZone(sr.nearestSupport)} | Resistance ${formatZone(sr.nearestResistance)}<br>FVG: ${fvg.nearestFvg ? `${fvg.nearestFvg.status} ${fvg.nearestFvg.type}` : "None"}<br>Channel: ${channel.status}<br>Confluence: ${confluenceContext.summary}<br>Scenario: ${scenarioContext.summary}<br>Risk Plan: ${scenarioContext.primaryScenario?.riskPlan?.available ? `Watch area available · RR ${scenarioContext.primaryScenario.riskPlan.quality}` : "Risk plan not available"}`);
+      return card(tf === "1W" ? "Weekly" : tf === "1D" ? "Daily" : tf, `Total candles: ${candles.length}<br>Last close: ${fmtPrice(candles.at(-1)?.close)}<br>${structure.status}<br>BOS/CHoCH: ${structure.bosChoch.status}<br>S/R: Support ${formatZone(sr.nearestSupport)} | Resistance ${formatZone(sr.nearestResistance)}<br>FVG: ${fvg.nearestFvg ? `${fvg.nearestFvg.status} ${fvg.nearestFvg.type}` : "None"}<br>Channel: ${channel.status}<br>Confluence: ${confluenceContext.summary}<br>Scenario: ${scenarioContext.summary}<br>Risk Plan: ${scenarioContext.primaryScenario?.riskPlan?.available ? `Watch area available · RR ${scenarioContext.primaryScenario.riskPlan.quality}` : "Risk plan not available"}<br>Reaction: ${reactionStudyContext.summary}`);
     }).join('')}</div>`;
     return;
   }
@@ -140,11 +141,17 @@ function getZoneConfluenceNote(zone) {
   return match ? `Confluence Candidate · Score ${match.score}/10` : (zone.note ?? "—");
 }
 
+function getZoneReactionNote(zone) {
+  if (!zone || !reactionStudyContext?.studiedZones?.length) return "";
+  const match = reactionStudyContext.studiedZones.find((reaction) => zone.midpoint >= reaction.lower && zone.midpoint <= reaction.upper);
+  return match ? `<br>Reaction: ${match.reactionLabel}` : "";
+}
+
 function renderMarketZonesCards() {
   const upside = marketZonesContext.upside[0];
   const downside = marketZonesContext.downside[0];
   const reaction = getCurrentChannelReactionZone();
-  const zoneCard = (title, zone, type) => `<article class="market-zone-card"><div class="card-label">${title}</div><div class="sr-zone-value">${zone ? formatZone(zone) : "—"}</div><span class="zone-status">${zone?.status ?? "No Clear Zone"}</span><div class="zone-distance">${type ? `Type: ${type}<br>` : ""}Distance: ${formatDistance(zone?.distancePct)}<br>Strength: ${zone?.strengthScore ?? "—"}/10<br>Note: ${getZoneConfluenceNote(zone)}</div></article>`;
+  const zoneCard = (title, zone, type) => `<article class="market-zone-card"><div class="card-label">${title}</div><div class="sr-zone-value">${zone ? formatZone(zone) : "—"}</div><span class="zone-status">${zone?.status ?? "No Clear Zone"}</span><div class="zone-distance">${type ? `Type: ${type}<br>` : ""}Distance: ${formatDistance(zone?.distancePct)}<br>Strength: ${zone?.strengthScore ?? "—"}/10<br>Note: ${getZoneConfluenceNote(zone)}${getZoneReactionNote(zone)}</div></article>`;
   return `<div class="summary-box card"><strong>MARKET ZONES</strong><br>${marketZonesContext.summary}</div><div class="market-zones-grid">${zoneCard("Upside Watch", upside, upside?.label)}${zoneCard("Downside Watch", downside, downside?.label)}${zoneCard("Current Reaction", reaction, reaction?.label)}</div>`;
 }
 
@@ -251,6 +258,28 @@ function renderConfluenceTab() {
   ].join('')}</div>`;
 }
 
+function renderReactionCard(title, reaction) {
+  if (!reaction) {
+    return `<article class="reaction-card"><div class="card-label">${title}</div><div class="reaction-note">Reaction study not available</div></article>`;
+  }
+  const risk = reaction.riskFlags?.length ? `<ul class="reaction-risk-list">${reaction.riskFlags.slice(0, 2).map((flag) => `<li>${flag}</li>`).join('')}</ul>` : '<div class="reaction-note">Risk: No dominant historical failure flag.</div>';
+  const notes = reaction.reactionNotes?.length ? `<div class="reaction-note">${reaction.reactionNotes.slice(0, 2).join(' ')}</div>` : `<div class="reaction-note">${reaction.note || "Historical reaction context."}</div>`;
+  return `<article class="reaction-card"><div class="card-label">${title}</div><div class="reaction-zone-value">Zone: ${formatZone(reaction)}<br>Type: ${reaction.timeframe} ${reaction.zoneType}<br>Source: ${reaction.source}</div><div class="reaction-score"><span>${reaction.reactionScore}/10</span><span class="reaction-score-label">${reaction.reactionLabel}</span></div><ul class="reaction-stat-list"><li>Touches: ${reaction.touches}</li><li>Positive Reaction: ${reaction.positiveCount}</li><li>Break/Fail: ${reaction.breakCount}</li><li>Avg Move: ${formatDistance(reaction.averageMovePct)}</li><li>Avg Adverse: ${formatDistance(reaction.averageAdverseMovePct)}</li></ul>${risk}${notes}</article>`;
+}
+
+function renderReactionStudyTab() {
+  const context = reactionStudyContext?.activeTimeframe === getActiveTimeframe() ? reactionStudyContext : rebuildReactionStudyContext(getActiveTimeframe());
+  if (!context.available) return `<div class="summary-box card">${context.summary}<br>Historical reaction context · Planning context only.</div>`;
+  return `<h2>Reaction Study</h2><p class="subtitle">Historical reaction context · Planning context only · For review only.</p><div class="summary-box card"><strong>Reaction Quality</strong><br>${context.summary}</div><div class="reaction-card-grid">${[
+    renderReactionCard("Strongest Reaction", context.strongestReaction),
+    renderReactionCard("Watch Area Reaction", context.watchAreaReaction),
+    renderReactionCard("Support Reaction", context.supportReactions[0]),
+    renderReactionCard("Resistance Reaction", context.resistanceReactions[0]),
+    renderReactionCard("FVG Reaction", context.fvgReactions[0]),
+    renderReactionCard("Channel Reaction", context.channelReactions[0])
+  ].join('')}</div>`;
+}
+
 
 function scenarioChipLabel(scenario) {
   const shortLabel = scenario.type.charAt(0).toUpperCase() + scenario.type.slice(1);
@@ -282,7 +311,8 @@ function renderScenarioPlanTab() {
   const chips = context.scenarios.map((scenario) => `<span class="scenario-chip ${scenario.isPrimary ? 'primary' : ''}">${scenarioChipLabel(scenario)}</span>`).join('');
   const list = (items, cls) => `<ul class="${cls}">${(items?.length ? items : ['Pending confirmation']).map((item) => `<li>${item}</li>`).join('')}</ul>`;
   const confluence = primary.confluenceCandidate ? `${primary.confluenceCandidate.scoreLabel} ${primary.confluenceCandidate.score}/10` : (confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel} ${confluenceContext.strongestCandidate.score}/10` : 'No confluence candidate');
-  return `<h2>Multi-Scenario Planning</h2><p class="subtitle">Planning context only • For review only • Not a trading signal.</p><div class="scenario-chip-grid">${chips}</div><article class="scenario-card primary"><div class="card-label">Primary Scenario</div><h2>${primary.label}</h2><div class="scenario-score">Score: ${primary.score}/10 — ${primary.scoreLabel}</div><p>${primary.status}</p><div class="channel-zone-value">Reference Zone: ${formatZone(primary.riskPlan?.watchArea || primary.referenceZone)}<br>Risk Plan: ${primary.riskPlan?.available ? `RR ${primary.riskPlan.quality}` : 'No directional plan'}<br>Scenario context: ${primary.summary}</div></article>${renderRiskPlanCards(primary.riskPlan)}<div class="scenario-card-grid">${[
+  const watchReaction = reactionStudyContext.watchAreaReaction ? `Watch area reaction: ${reactionStudyContext.watchAreaReaction.reactionScore}/10 ${reactionStudyContext.watchAreaReaction.reactionLabel}` : "Watch area reaction not available";
+  return `<h2>Multi-Scenario Planning</h2><p class="subtitle">Planning context only • For review only • No execution instruction.</p><div class="scenario-chip-grid">${chips}</div><article class="scenario-card primary"><div class="card-label">Primary Scenario</div><h2>${primary.label}</h2><div class="scenario-score">Score: ${primary.score}/10 — ${primary.scoreLabel}</div><p>${primary.status}</p><div class="channel-zone-value">Reference Zone: ${formatZone(primary.riskPlan?.watchArea || primary.referenceZone)}<br>Risk Plan: ${primary.riskPlan?.available ? `RR ${primary.riskPlan.quality}` : 'No directional plan'}<br>Reaction Study: ${watchReaction}<br>Scenario context: ${primary.summary}</div></article>${renderRiskPlanCards(primary.riskPlan)}<div class="scenario-card-grid">${[
     ['Scenario Zone', `Reference zone only<br>${formatZone(primary.riskPlan?.watchArea || primary.referenceZone)}<br><span class="scenario-pending-note">Exact execution area remains for later review</span>`],
     ['Confirmation Needed', list(primary.confirmationNeeds, 'scenario-reason-list')],
     ['Confluence', confluence],
@@ -297,7 +327,7 @@ function renderDetail() {
   const latest = getGlobalLatestPrice();
   const data = {
     'Indicator': `<div class="selector-row">${['Volume','RSI','MACD','ATR','Volatility','Structure'].map(metric).join('')}</div>${grid([['Volume Status', last ? 'Loaded' : 'Waiting Data'],['Last Volume', fmtVolume(last?.volume)],['RSI','Placeholder'],['ATR','Placeholder'],['Volatility','Placeholder']], 'detail-grid six')}<div class="mini-chart"></div>`,
-    'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position', (channelContexts[getActiveTimeframe()] ?? createEmptyChannelContext(getActiveTimeframe())).status],['Confluence', confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel} ${confluenceContext.strongestCandidate.score}/10` : 'No Candidate'],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>${renderMarketZonesCards()}`,
+    'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position', (channelContexts[getActiveTimeframe()] ?? createEmptyChannelContext(getActiveTimeframe())).status],['Confluence', confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel} ${confluenceContext.strongestCandidate.score}/10` : 'No Candidate'],['Reaction', reactionStudyContext.strongestReaction ? `${reactionStudyContext.strongestReaction.reactionLabel} ${reactionStudyContext.strongestReaction.reactionScore}/10` : 'Reaction study not available'],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>${renderMarketZonesCards()}`,
     'Scenario Plan': renderScenarioPlanTab(),
     'Structure': (() => {
       const context = structureContexts[getActiveTimeframe()] ?? createEmptyStructureContext(getActiveTimeframe());
@@ -307,7 +337,7 @@ function renderDetail() {
     'S/R': renderSrTab(),
     'Channel': renderChannelTab(),
     'Confluence': renderConfluenceTab(),
-    'Reaction Study': `<div class="selector-row">${['Event Type','Outcome Window','Target %','Range Basis'].map(metric).join('')}</div>${grid([['Total Events','Pending'],['Success Rate','Pending'],['Failed','Pending'],['Avg Upside','Pending'],['Avg Drawdown','Pending'],['Median Reaction','Pending']], 'detail-grid six')}`,
+    'Reaction Study': renderReactionStudyTab(),
     'Table': renderTable()
   };
   el.innerHTML = data[activeDetail];
@@ -342,5 +372,6 @@ window.BtcDash.ui = {
   renderChannelTab,
   renderMtfChannelCards,
   renderConfluenceTab,
-  renderScenarioPlanTab
+  renderScenarioPlanTab,
+  renderReactionStudyTab
 };
