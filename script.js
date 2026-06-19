@@ -23,12 +23,22 @@ const workspaceConfig = {
   "Daily + 4H Setup": { timeframe: "4H", title: "4H Setup Chart with Daily Context", ranges: ["1M", "3M", "6M"], defaultRange: "3M", strip: ["Daily Bias", "Daily FVG", "Daily S/R", "Daily Channel", "Daily Warning"] },
   "1H Timing": { timeframe: "1H", title: "1H Timing Chart", ranges: ["7D", "14D", "1M", "3M"], defaultRange: "14D", strip: ["Weekly Bias", "Daily Context", "4H Setup", "Nearest Confluence"] }
 };
+const BINANCE_INTERVALS = { "1W": "1w", "1D": "1d", "4H": "4h", "1H": "1h" };
+const BINANCE_SYMBOL = "BTCUSDT";
+const DATA_CACHE_KEY = "btcPatternDashboard.marketData.v1";
+const RUNNING_CACHE_KEY = "btcPatternDashboard.runningCandles.v1";
+const CACHE_META_KEY = "btcPatternDashboard.cacheMeta.v1";
+const AUTO_UPDATE_KEY = "btcPatternDashboard.autoUpdate.v1";
 const marketData = { "1W": [], "1D": [], "4H": [], "1H": [] };
+const runningCandles = { "1W": null, "1D": null, "4H": null, "1H": null };
 const rangeState = { "Weekly Map": "3Y", "Daily + 4H Setup": "3M", "1H Timing": "14D" };
 let activeWorkspace = "Weekly Map";
 let activeDetail = "Indicator";
 let loading = false;
 let loadError = "";
+let dataStatusMessage = "Loading repo data...";
+let cacheMeta = null;
+let autoUpdateEnabled = localStorage.getItem(AUTO_UPDATE_KEY) !== "false";
 let tradingChart = null;
 let candleSeries = null;
 let resizeObserver = null;
@@ -72,23 +82,157 @@ function normalizeCandles(candles) {
   return [...unique.values()].sort((a, b) => a.open_time - b.open_time);
 }
 
-async function loadTimeframeData(timeframe) {
-  const files = Array.isArray(DATA_FILES[timeframe]) ? DATA_FILES[timeframe] : [DATA_FILES[timeframe]];
-  const candlesByFile = await Promise.all(files.map(fetchCandles));
-  marketData[timeframe] = normalizeCandles(candlesByFile.flat());
-  return marketData[timeframe];
+function mergeCandles(existingCandles, newCandles) {
+  return normalizeCandles([...(existingCandles ?? []), ...(newCandles ?? [])]);
 }
 
-async function loadAllRepoData() {
+async function loadRepoData() {
+  const repoData = { "1W": [], "1D": [], "4H": [], "1H": [] };
+  await Promise.all(Object.keys(DATA_FILES).map(async (timeframe) => {
+    const files = Array.isArray(DATA_FILES[timeframe]) ? DATA_FILES[timeframe] : [DATA_FILES[timeframe]];
+    const candlesByFile = await Promise.all(files.map(fetchCandles));
+    repoData[timeframe] = normalizeCandles(candlesByFile.flat());
+  }));
+  return repoData;
+}
+
+function readJsonStorage(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function loadCacheData() {
+  const cachedData = readJsonStorage(DATA_CACHE_KEY, null);
+  const cachedRunning = readJsonStorage(RUNNING_CACHE_KEY, null);
+  cacheMeta = readJsonStorage(CACHE_META_KEY, null);
+  Object.keys(runningCandles).forEach((timeframe) => {
+    runningCandles[timeframe] = cachedRunning?.[timeframe] ?? null;
+  });
+  return cachedData;
+}
+
+function applyRepoAndCache(repoData, cachedData) {
+  Object.keys(marketData).forEach((timeframe) => {
+    marketData[timeframe] = mergeCandles(repoData[timeframe], cachedData?.[timeframe] ?? []);
+  });
+}
+
+function saveCacheData() {
+  try {
+    localStorage.setItem(DATA_CACHE_KEY, JSON.stringify(marketData));
+    localStorage.setItem(RUNNING_CACHE_KEY, JSON.stringify(runningCandles));
+    cacheMeta = { source: "repo_plus_binance_runtime_merge", updated_at: new Date().toISOString() };
+    localStorage.setItem(CACHE_META_KEY, JSON.stringify(cacheMeta));
+  } catch (error) {
+    dataStatusMessage = "Cache save failed. Data is still available for this session.";
+  }
+}
+
+function clearDataCache() {
+  localStorage.removeItem(DATA_CACHE_KEY);
+  localStorage.removeItem(RUNNING_CACHE_KEY);
+  localStorage.removeItem(CACHE_META_KEY);
+  cacheMeta = null;
+  Object.keys(runningCandles).forEach((timeframe) => { runningCandles[timeframe] = null; });
+}
+
+async function loadAllRepoData({ runAutoUpdate = autoUpdateEnabled } = {}) {
   loading = true;
   loadError = "";
+  dataStatusMessage = "Loading repo data...";
   renderAll();
   try {
-    await Promise.all(Object.keys(DATA_FILES).map(loadTimeframeData));
+    const repoData = await loadRepoData();
+    const cachedData = loadCacheData();
+    applyRepoAndCache(repoData, cachedData);
+    dataStatusMessage = cachedData ? "Repo data loaded and merged with local cache." : "Repo data loaded.";
+    loading = false;
+    renderAll();
+    if (runAutoUpdate) await autoUpdateFromBinance();
   } catch (error) {
     loadError = error.message;
-  } finally {
+    dataStatusMessage = "Repo data load failed.";
     loading = false;
+    renderAll();
+  }
+}
+
+function binanceRowToCandle(row) {
+  const openTime = Number(row[0]);
+  const closeTime = Number(row[6]);
+  return {
+    time: new Date(openTime).toISOString(),
+    open_time: openTime,
+    close_time: closeTime,
+    close_time_iso: new Date(closeTime).toISOString(),
+    open: Number(row[1]),
+    high: Number(row[2]),
+    low: Number(row[3]),
+    close: Number(row[4]),
+    volume: Number(row[5]),
+    quote_volume: Number(row[7]),
+    trades: Number(row[8]),
+    taker_buy_base_volume: Number(row[9]),
+    taker_buy_quote_volume: Number(row[10])
+  };
+}
+
+async function fetchMissingBinanceCandles(timeframe) {
+  const last = marketData[timeframe]?.at(-1);
+  if (!last) return [];
+  let startTime = Number(last.close_time ?? last.open_time) + 1;
+  const interval = BINANCE_INTERVALS[timeframe];
+  const allRows = [];
+
+  while (startTime && interval) {
+    const params = new URLSearchParams({ symbol: BINANCE_SYMBOL, interval, startTime: String(startTime), limit: "1000" });
+    const response = await fetch(`https://api.binance.com/api/v3/klines?${params.toString()}`);
+    if (!response.ok) throw new Error(`Binance ${timeframe} fetch failed (${response.status})`);
+    const rows = await response.json();
+    if (!Array.isArray(rows) || !rows.length) break;
+    allRows.push(...rows);
+    if (rows.length < 1000) break;
+    const nextStart = Number(rows.at(-1)?.[6]) + 1;
+    if (!Number.isFinite(nextStart) || nextStart <= startTime) break;
+    startTime = nextStart;
+  }
+
+  return allRows.map(binanceRowToCandle);
+}
+
+function splitClosedAndRunning(candles) {
+  const now = Date.now();
+  const closed = [];
+  let running = null;
+  candles.forEach((candle) => {
+    if (Number(candle.close_time) > now) running = candle;
+    else closed.push(candle);
+  });
+  return { closed, running };
+}
+
+async function autoUpdateFromBinance() {
+  dataStatusMessage = "Auto updating from Binance...";
+  renderDataStatus();
+  const counts = {};
+  try {
+    for (const timeframe of Object.keys(BINANCE_INTERVALS)) {
+      const fetched = await fetchMissingBinanceCandles(timeframe);
+      const { closed, running } = splitClosedAndRunning(fetched);
+      counts[timeframe] = closed.length;
+      marketData[timeframe] = mergeCandles(marketData[timeframe], closed);
+      runningCandles[timeframe] = running;
+      renderAll();
+    }
+    saveCacheData();
+    dataStatusMessage = `Binance update complete: 1W ${counts["1W"] ?? 0} new, 1D ${counts["1D"] ?? 0} new, 4H ${counts["4H"] ?? 0} new, 1H ${counts["1H"] ?? 0} new`;
+  } catch (error) {
+    dataStatusMessage = "Binance update failed. Existing repo/cache data is still available.";
+  } finally {
     renderAll();
   }
 }
@@ -110,6 +254,24 @@ function simpleTrend(tf, upText, downText, minBack = 20) {
   const candles = marketData[tf];
   if (candles.length <= minBack) return tf === "1D" ? "Warning" : "Neutral";
   return candles[candles.length - 1].close > candles[candles.length - 1 - minBack].close ? upText : downText;
+}
+
+function renderDataStatus() {
+  const el = qs('#data-status');
+  if (!el) return;
+  const cacheState = cacheMeta ? "Active" : "Empty";
+  const lastUpdate = cacheMeta?.updated_at ? new Date(cacheMeta.updated_at).toLocaleString() : "—";
+  const runningPreview = ["1H", "4H"].map((tf) => `${tf} running close: ${fmtPrice(runningCandles[tf]?.close)}`).join(" • ");
+  el.innerHTML = `
+    <span><strong>Data Source:</strong> Repo + Binance Runtime</span>
+    <span><strong>Last Binance Update:</strong> ${lastUpdate}</span>
+    <span><strong>Cache:</strong> ${cacheState}</span>
+    <span><strong>Running Candle:</strong> Preview Only</span>
+    <span><strong>Status:</strong> ${dataStatusMessage}</span>
+    <span><strong>Running Preview:</strong> ${runningPreview}</span>
+  `;
+  qs('#auto-update').textContent = `Auto Update: ${autoUpdateEnabled ? "ON" : "OFF"}`;
+  qs('#auto-update').classList.toggle('active', autoUpdateEnabled);
 }
 
 function renderSummary() {
@@ -335,13 +497,25 @@ function renderDetail() {
 function renderAll() {
   renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace');
   renderTabs('.detail-tabs', details, activeDetail, 'setDetail');
+  renderDataStatus();
   renderSummary();
   renderWorkspace();
   renderDetail();
 }
 
-qs('#load-data').addEventListener('click', loadAllRepoData);
-qs('#reset-cache').addEventListener('click', () => { localStorage.clear(); renderAll(); });
+qs('#load-data').addEventListener('click', () => loadAllRepoData());
+qs('#update-binance').addEventListener('click', autoUpdateFromBinance);
+qs('#auto-update').addEventListener('click', () => {
+  autoUpdateEnabled = !autoUpdateEnabled;
+  localStorage.setItem(AUTO_UPDATE_KEY, String(autoUpdateEnabled));
+  dataStatusMessage = `Auto Update ${autoUpdateEnabled ? "enabled" : "disabled"}.`;
+  renderDataStatus();
+});
+qs('#reset-cache').addEventListener('click', async () => {
+  clearDataCache();
+  dataStatusMessage = "Local candle cache reset. Reloading repo data...";
+  await loadAllRepoData();
+});
 qs('.layer-control').addEventListener('click', (event) => {
   const button = event.target.closest('[data-layer]');
   if (!button) return;

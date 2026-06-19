@@ -35,11 +35,11 @@ body {
 }
 
 .dashboard-shell { width: 100%; max-width: none; margin: 0; padding: 24px; }
-.hero-header, .control-bar, .workspace-tabs, .summary-grid, .workspace-content, .chart-panel, .layer-control, .detail-tabs, .detail-content {
+.hero-header, .control-bar, .data-status-bar, .workspace-tabs, .summary-grid, .workspace-content, .chart-panel, .layer-control, .detail-tabs, .detail-content {
   width: 100%;
   max-width: none;
 }
-.hero-header, .control-bar, .workspace-content, .detail-content {
+.hero-header, .control-bar, .data-status-bar, .workspace-content, .detail-content {
   border: 1px solid var(--border);
   background: linear-gradient(135deg, rgba(14, 31, 52, 0.94), rgba(8, 18, 33, 0.94));
   border-radius: 24px;
@@ -49,13 +49,16 @@ body {
 .eyebrow { color: var(--accent); margin: 0 0 8px; text-transform: uppercase; letter-spacing: .16em; font-size: 12px; font-weight: 800; }
 h1 { margin: 0; font-size: clamp(34px, 4vw, 60px); line-height: .95; }
 .subtitle { margin: 12px 0 0; color: var(--muted); font-size: 15px; }
-.badge-row, .control-bar, .tab-row, .layer-control, .chip-row, .selector-row, .range-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.badge-row, .control-bar, .data-status-bar, .tab-row, .layer-control, .chip-row, .selector-row, .range-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .badge, .chip, .metric, button {
   border: 1px solid var(--border); border-radius: 999px; padding: 10px 14px;
   background: rgba(255,255,255,.045); color: var(--text); font-weight: 700;
 }
 .badge-warn { color: #ffe7a3; border-color: rgba(251,191,36,.42); }
 .control-bar { margin-top: 16px; padding: 16px; }
+.data-status-bar { margin-top: 12px; padding: 12px 16px; color: var(--muted); font-size: 13px; align-items: center; }
+.data-status-bar span { border: 1px solid rgba(120, 153, 195, .15); border-radius: 999px; padding: 8px 10px; background: rgba(255,255,255,.035); }
+.data-status-bar strong { color: var(--text); }
 button { cursor: pointer; font: inherit; transition: .18s ease; }
 button:hover, button.active, .chip.active { border-color: rgba(57,211,255,.75); background: linear-gradient(135deg, rgba(57,211,255,.18), rgba(139,92,246,.16)); box-shadow: 0 0 0 3px rgba(57,211,255,.08); }
 button.ghost { color: var(--muted); }

@@ -23,10 +23,12 @@
 
       <section class="control-bar" aria-label="Dashboard controls">
         <button id="load-data" type="button">Load Repo Data</button>
-        <button type="button" disabled title="Coming soon">Update from Binance</button>
-        <button type="button" disabled title="Coming soon">Export Updated Data</button>
+        <button id="update-binance" type="button">Update from Binance</button>
+        <button id="auto-update" type="button">Auto Update: ON</button>
         <button id="reset-cache" type="button" class="ghost">Reset Local Cache</button>
       </section>
+
+      <section id="data-status" class="data-status-bar" aria-live="polite"></section>
 
       <nav class="tab-row workspace-tabs" aria-label="Workspace tabs"></nav>
 
