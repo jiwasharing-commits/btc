@@ -66,11 +66,10 @@ function renderSummary() {
     "Daily Context": `${daily.bias}<small>${daily.status}</small>`,
     "4H Setup": `${fourH.bias}<small>${fourH.bosChoch.status}</small>`,
     "1H Timing": `${oneH.bias}<small>${oneH.bosChoch.status}</small>`,
-    "FVG Confluence": daily4hFvgConfluence.status === "Active Confluence" ? `Active D+4H ${daily4hFvgConfluence.type}` : daily4hFvgConfluence.status === "Conflict" ? "Conflict" : "No FVG Confluence",
     "Channel": channel.status,
-    "Confluence": confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel} ${confluenceContext.strongestCandidate.score}/10` : "No Candidate",
-    "Top Scenario": scenarioContext.primaryScenario ? `${scenarioContext.primaryScenario.label} ${scenarioContext.primaryScenario.score}/10<small>RR ${scenarioContext.primaryScenario.riskPlan?.quality || "Unavailable"} · Planning context</small>` : "Scenario context not available",
-    "Reaction": reactionStudyContext.strongestReaction ? `${reactionStudyContext.strongestReaction.reactionLabel} ${reactionStudyContext.strongestReaction.reactionScore}/10` : "Reaction study not available",
+    "Confluence": confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel.replace(" Context", "")} ${confluenceContext.strongestCandidate.score}/10` : "No Candidate",
+    "Top Scenario": scenarioContext.primaryScenario ? `${scenarioContext.primaryScenario.label} ${scenarioContext.primaryScenario.score}/10<small>RR ${scenarioContext.primaryScenario.riskPlan?.quality || "Unavailable"} · Planning</small>` : "Scenario context not available",
+    "Reaction": reactionStudyContext.strongestReaction ? `${reactionStudyContext.strongestReaction.reactionLabel.replace(" Historical Reaction", "")} ${reactionStudyContext.strongestReaction.reactionScore}/10` : "Reaction study not available",
     "Risk": getZoneRiskLabel()
   };
   qs('.summary-grid').innerHTML = Object.entries(summary).map(([k, v]) => `<article class="summary-card"><div class="card-label">${k}</div><div class="card-value">${v}</div></article>`).join('');
@@ -148,11 +147,13 @@ function getZoneReactionNote(zone) {
 }
 
 function renderMarketZonesCards() {
-  const upside = marketZonesContext.upside[0];
-  const downside = marketZonesContext.downside[0];
   const reaction = getCurrentChannelReactionZone();
-  const zoneCard = (title, zone, type) => `<article class="market-zone-card"><div class="card-label">${title}</div><div class="sr-zone-value">${zone ? formatZone(zone) : "—"}</div><span class="zone-status">${zone?.status ?? "No Clear Zone"}</span><div class="zone-distance">${type ? `Type: ${type}<br>` : ""}Distance: ${formatDistance(zone?.distancePct)}<br>Strength: ${zone?.strengthScore ?? "—"}/10<br>Note: ${getZoneConfluenceNote(zone)}${getZoneReactionNote(zone)}</div></article>`;
-  return `<div class="summary-box card"><strong>MARKET ZONES</strong><br>${marketZonesContext.summary}</div><div class="market-zones-grid">${zoneCard("Upside Watch", upside, upside?.label)}${zoneCard("Downside Watch", downside, downside?.label)}${zoneCard("Current Reaction", reaction, reaction?.label)}</div>`;
+  const strongest = confluenceContext.strongestCandidate;
+  const zoneLine = (zone) => `<div class="market-zone-row"><strong>${zone.label}</strong><br>${formatZone(zone)} · ${formatDistance(zone.distancePct)}${getZoneReactionNote(zone)}</div>`;
+  const zoneListCard = (title, rows) => `<article class="market-zone-card"><div class="card-label">${title}</div>${rows.length ? rows.slice(0, 3).map(zoneLine).join('') : '<div class="sr-zone-value">—</div>'}</article>`;
+  const reactionCard = `<article class="market-zone-card"><div class="card-label">Current Reaction</div><div class="sr-zone-value">${reaction ? formatZone(reaction) : "—"}</div><span class="zone-status">${reaction?.status ?? "No Clear Zone"}</span><div class="zone-distance">Type: ${reaction?.label ?? "—"}<br>Note: ${getZoneConfluenceNote(reaction)}${getZoneReactionNote(reaction)}</div></article>`;
+  const confluenceCard = `<article class="market-zone-card"><div class="card-label">Confluence Highlight</div><div class="sr-zone-value">${strongest ? formatZone(strongest) : "—"}</div><span class="zone-status">${strongest?.status ?? "No Candidate"}</span><div class="zone-distance">${strongest ? `${strongest.scoreLabel} ${strongest.score}/10<br>${strongest.label}` : "Planning context only"}</div></article>`;
+  return `<div class="summary-box card"><strong>MARKET ZONES</strong><br>${marketZonesContext.summary}</div><div class="market-zones-grid">${zoneListCard("Upside Watch", marketZonesContext.upside)}${zoneListCard("Downside Watch", marketZonesContext.downside)}${reactionCard}${confluenceCard}</div>`;
 }
 
 function renderSrTab() {
@@ -241,7 +242,8 @@ function renderConfluenceCandidateCard(title, candidate) {
   if (!candidate) {
     return `<article class="confluence-card"><div class="card-label">${title}</div><div class="confluence-zone-value">No confluence candidate detected</div><div class="confluence-note">For planning context only.</div></article>`;
   }
-  const sources = candidate.zones.map((zone) => `${zone.timeframe} ${zone.label}`).join(', ');
+  const visibleSources = candidate.zones.slice(0, 4).map((zone) => `${zone.timeframe} ${zone.label}`);
+  const sources = `${visibleSources.join(', ')}${candidate.zones.length > 4 ? ` +${candidate.zones.length - 4} more` : ''}`;
   const factors = candidate.scoreFactors?.slice(0, 3).map((factor) => `<li>${factor}</li>`).join('') || '<li>No score factors available</li>';
   const risks = candidate.riskFlags?.length ? `<ul class="confluence-risk-list">${candidate.riskFlags.slice(0, 3).map((risk) => `<li>${risk}</li>`).join('')}</ul>` : '<div class="confluence-note">Risk: No major conflict flags.</div>';
   return `<article class="confluence-card"><div class="card-label">${title}</div><span class="confluence-badge ${confluenceBadgeClass(candidate.status)}">${candidate.status}</span><div class="confluence-score"><span class="confluence-score-value">${candidate.score}/10</span><span class="confluence-score-label">${candidate.scoreLabel}</span></div><div class="confluence-zone-value">Zone: ${formatZone(candidate)}<br>Distance: ${formatDistance(candidate.distancePct)}<br>Relation: ${candidate.relation}</div><div class="confluence-source-list">Sources: ${sources}</div><ul class="confluence-factor-list">${factors}</ul>${risks}<div class="confluence-note">${candidate.note}</div></article>`;
@@ -270,7 +272,7 @@ function renderReactionCard(title, reaction) {
 function renderReactionStudyTab() {
   const context = reactionStudyContext?.activeTimeframe === getActiveTimeframe() ? reactionStudyContext : rebuildReactionStudyContext(getActiveTimeframe());
   if (!context.available) return `<div class="summary-box card">${context.summary}<br>Historical reaction context · Planning context only.</div>`;
-  return `<h2>Reaction Study</h2><p class="subtitle">Historical reaction context · Planning context only · For review only.</p><div class="summary-box card"><strong>Reaction Quality</strong><br>${context.summary}</div><div class="reaction-card-grid">${[
+  return `<h2>Reaction Study</h2><p class="subtitle">Historical reaction context · Planning context only · For review only · No execution instruction.</p><div class="summary-box card"><strong>Reaction Quality</strong><br>${context.summary}</div><div class="reaction-card-grid">${[
     renderReactionCard("Strongest Reaction", context.strongestReaction),
     renderReactionCard("Watch Area Reaction", context.watchAreaReaction),
     renderReactionCard("Support Reaction", context.supportReactions[0]),

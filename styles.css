@@ -130,6 +130,7 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
 .sr-zone-value { color: var(--text); font-weight: 850; line-height: 1.55; margin-top: 8px; }
 .sr-badge, .zone-status { display: inline-flex; margin-top: 10px; border-radius: 999px; padding: 6px 10px; background: rgba(57, 211, 255, .13); color: #b9f2ff; font-size: 12px; font-weight: 900; }
 .zone-distance { color: var(--muted); line-height: 1.55; margin-top: 8px; font-size: 13px; }
+.market-zone-row { border-top: 1px solid rgba(148, 163, 184, .12); color: #cbd5e1; font-size: .82rem; line-height: 1.45; padding-top: 8px; margin-top: 8px; }
 @media (max-width: 1200px) { .sr-card-grid, .market-zones-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 768px) { .sr-card-grid, .market-zones-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); } }
 .fvg-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }

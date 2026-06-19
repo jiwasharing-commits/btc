@@ -139,6 +139,14 @@ const RISK_PLAN_CONFIG = {
   }
 };
 
+const MARKET_ZONE_CLEANUP_CONFIG = {
+  maxUpsideRows: 3,
+  maxDownsideRows: 3,
+  maxCurrentReactionRows: 2,
+  maxConfluenceHighlights: 1,
+  htfPriority: { "1W": 4, "1D": 3, "4H": 2, "1H": 1 }
+};
+
 const REACTION_STUDY_CONFIG = {
   maxEventsPerZone: 12,
   maxZonesToStudy: 12,
@@ -178,5 +186,6 @@ window.BtcDash.config = {
   CONFLUENCE_SCORE_CONFIG,
   SCENARIO_CONFIG,
   RISK_PLAN_CONFIG,
+  MARKET_ZONE_CLEANUP_CONFIG,
   REACTION_STUDY_CONFIG
 };

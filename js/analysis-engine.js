@@ -336,6 +336,40 @@ function channelBoundaryToMarketRow(context, boundary, activeTimeframe, currentP
   return { id: `${context.timeframe}-channel-${boundary}`, side, zoneType: "channel", timeframe: context.timeframe, label: `${context.timeframe} ${labelName}`, lower, upper, midpoint: price, distancePct: distanceToZonePct({ lower, upper }, currentPrice), strengthScore: context.timeframe === activeTimeframe ? 7 : 5, status: context.status, source: CHANNEL_CONFIG[context.timeframe]?.label ?? "Channel", note: context.timeframe === activeTimeframe ? "Local channel boundary" : `${context.timeframe} HTF channel boundary` };
 }
 
+function marketZonePriority(row) {
+  const htfPriority = MARKET_ZONE_CLEANUP_CONFIG.htfPriority[row.timeframe] ?? 0;
+  const score = row.score ?? row.confluenceScore ?? row.strengthScore ?? 0;
+  const sourceCount = row.sourceCount ?? (row.note?.split("+").length || 1);
+  const distance = Number.isFinite(row.distancePct) ? row.distancePct : 999;
+  return (score * 10) + (sourceCount * 4) + htfPriority - distance;
+}
+
+function dedupeMarketZoneRows(rows, activeTimeframe) {
+  const tolerance = CONFLUENCE_CONFIG.proximityPct[activeTimeframe] || 1;
+  const sorted = rows.slice().sort((a, b) => marketZonePriority(b) - marketZonePriority(a));
+  const deduped = [];
+  sorted.forEach((row) => {
+    const match = deduped.find((item) => Math.abs(item.midpoint - row.midpoint) / ((item.midpoint + row.midpoint) / 2) * 100 < tolerance && item.side === row.side);
+    if (!match) {
+      deduped.push({ ...row });
+      return;
+    }
+    const sourceTypes = new Set([match.zoneType, row.zoneType].filter(Boolean).map((type) => type === "sr" ? "S/R" : type.toUpperCase()));
+    match.lower = Math.min(match.lower, row.lower);
+    match.upper = Math.max(match.upper, row.upper);
+    match.midpoint = (match.lower + match.upper) / 2;
+    match.strengthScore = Math.max(match.strengthScore ?? 0, row.strengthScore ?? 0);
+    match.distancePct = Math.min(match.distancePct ?? 999, row.distancePct ?? 999);
+    match.note = `${[...sourceTypes].join(" + ")} context`;
+    if ((MARKET_ZONE_CLEANUP_CONFIG.htfPriority[row.timeframe] ?? 0) > (MARKET_ZONE_CLEANUP_CONFIG.htfPriority[match.timeframe] ?? 0)) {
+      match.timeframe = row.timeframe;
+      match.label = row.label;
+      match.source = row.source;
+    }
+  });
+  return deduped.sort((a, b) => (a.distancePct ?? 999) - (b.distancePct ?? 999));
+}
+
 function buildMarketZonesContext(activeTimeframe) {
   const currentPrice = marketData[activeTimeframe]?.at(-1)?.close;
   if (!currentPrice) return { upside: [], downside: [], nearestSupport: null, nearestResistance: null, activeTimeframe, summary: "No clear support/resistance detected" };
@@ -362,9 +396,10 @@ function buildMarketZonesContext(activeTimeframe) {
       if (row) rows.push(row);
     });
   });
-  const upside = rows.filter((row) => row.side === "upside").sort((a, b) => a.distancePct - b.distancePct).slice(0, 3);
-  const downside = rows.filter((row) => row.side === "downside").sort((a, b) => a.distancePct - b.distancePct).slice(0, 3);
-  return { upside, downside, nearestSupport: downside[0] ?? null, nearestResistance: upside[0] ?? null, activeTimeframe, summary: "S/R + FVG + Channel. Confluence scoring will be added later." };
+  const upside = dedupeMarketZoneRows(rows.filter((row) => row.side === "upside"), activeTimeframe).slice(0, MARKET_ZONE_CLEANUP_CONFIG.maxUpsideRows);
+  const downside = dedupeMarketZoneRows(rows.filter((row) => row.side === "downside"), activeTimeframe).slice(0, MARKET_ZONE_CLEANUP_CONFIG.maxDownsideRows);
+  console.info("[UI Cleanup]", { activeWorkspace, activeTimeframe, marketZoneRows: { raw: rows.length, upside: upside.length, downside: downside.length } });
+  return { upside, downside, nearestSupport: downside[0] ?? null, nearestResistance: upside[0] ?? null, activeTimeframe, summary: "S/R + FVG + Channel. Planning context only." };
 }
 
 function rebuildAllSrContexts() {
@@ -1072,6 +1107,7 @@ window.BtcDash.analysis = {
   deriveSrZoneStatus,
   enrichSrZone,
   buildSrContext,
+  dedupeMarketZoneRows,
   zoneToMarketRow,
   buildMarketZonesContext,
   rebuildAllSrContexts,

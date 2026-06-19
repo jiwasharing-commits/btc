@@ -94,6 +94,26 @@ function addDummyPriceLines(closedCandles, running) {
     }
   }
 
+  if (activeLayers.Confluence) {
+    const candidate = confluenceContext?.strongestCandidate;
+    if (candidate) {
+      candleSeries.createPriceLine({ price: candidate.midpoint, color: "rgba(45, 212, 191, .75)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: "Confluence" });
+    }
+  }
+
+  if (activeLayers["Scenario Levels"]) {
+    addScenarioLevelPriceLines();
+  }
+}
+
+function addScenarioLevelPriceLines() {
+  const riskPlan = scenarioContext?.primaryScenario?.riskPlan;
+  if (!candleSeries || !riskPlan?.available) return;
+  candleSeries.createPriceLine({ price: riskPlan.watchArea.midpoint, color: "rgba(34, 197, 94, .75)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "Watch Area" });
+  candleSeries.createPriceLine({ price: riskPlan.invalidation.level, color: "rgba(248, 113, 113, .78)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: "Invalidation Ref" });
+  riskPlan.targets.slice(0, 3).forEach((target, index) => {
+    candleSeries.createPriceLine({ price: target.level, color: "rgba(125, 211, 252, .68)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: `TP${index + 1} Ref` });
+  });
 }
 
 function addDummyMarkers(closedCandles, running, timeframe) {
@@ -145,7 +165,7 @@ function addChannelOverlays(candles, timeframe) {
     const midColor = isLocal ? "rgba(250, 204, 21, 0.65)" : "rgba(148, 163, 184, 0.25)";
     addChannelLine(context.upperLine, firstTime, lastTime, mainColor, isLocal ? 2 : 1, `${prefix} Upper`);
     addChannelLine(context.lowerLine, firstTime, lastTime, lowerColor, isLocal ? 2 : 1, `${prefix} Lower`);
-    addChannelLine(context.midLine, firstTime, lastTime, midColor, 1, `${prefix} Mid`);
+    if (isLocal) addChannelLine(context.midLine, firstTime, lastTime, midColor, 1, `${prefix} Mid`);
   });
 }
 
@@ -210,6 +230,7 @@ window.BtcDash.chart = {
   chart,
   clearTradingChart,
   addDummyPriceLines,
+  addScenarioLevelPriceLines,
   addDummyMarkers,
   addChannelOverlays,
   renderTradingChart
