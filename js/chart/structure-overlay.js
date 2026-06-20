@@ -5,27 +5,42 @@
 
   function isLayerEnabled() {
     const state = window.BtcDash.state;
-    const runtime = state?.chartRuntime?.layerState?.structure;
-    const legacyMap = { structure: "Structure", sr: "S/R", fvg: "FVG", liquidity: "EQH/EQL", channel: "Channel", confluence: "Confluence", scenario: "Scenario Levels" };
-    return Boolean(runtime || state?.activeLayers?.[legacyMap["structure"]]);
+    return Boolean(state?.chartRuntime?.layerState?.structure || state?.activeLayers?.Structure);
+  }
+
+  function getDisplaySwings(context) {
+    return context?.displaySwings || context?.displayLabels || context?.labels || [];
   }
 
   function buildStructureOverlayItems(timeframe) {
-    const state = window.BtcDash.state || {};
-    if ("structure" === "structure") return (state.structureContexts?.[timeframe]?.labels || []).slice(-40).map((item) => ({ layer: "structure", timeframe, source: "structure", sourceId: `${item.time}-${item.label}`, type: item.type, price: item.price, startTime: item.time, endTime: item.time, label: item.label }));
-    if ("structure" === "sr") return (typeof window.BtcDash.chart?.buildSrVisualItems === "function" ? window.BtcDash.chart.buildSrVisualItems(timeframe) : []).map((item) => ({ ...item, layer: "sr", timeframe, zoneLow: item.lower, zoneHigh: item.upper, label: item.kind === "support" ? `${timeframe} Support` : `${timeframe} Resistance` }));
-    if ("structure" === "fvg") return (typeof window.BtcDash.chart?.buildFvgVisualItems === "function" ? window.BtcDash.chart.buildFvgVisualItems(timeframe) : []).map((item) => ({ ...item.zone, layer: "fvg", timeframe: item.timeframe || timeframe, zoneLow: item.zone.lower, zoneHigh: item.zone.upper, startTime: item.startTime, endTime: item.endTime, label: `${item.timeframe || timeframe} ${item.zone.type === "bearish" ? "Bear" : "Bull"} FVG` }));
-    if ("structure" === "channel") return Object.entries(state.channelContexts || {}).filter(([, context]) => context?.available).slice(0, 4).map(([tf, context]) => ({ layer: "channel", timeframe: tf, source: "channel", sourceId: tf, type: context.status, price: context.projectedLevels?.mid, label: `${tf} Channel` }));
-    if ("structure" === "confluence") return (state.confluenceContext?.candidates || []).slice(0, 4).map((item) => ({ ...item, layer: "confluence", timeframe: item.timeframes?.[0] || timeframe, zoneLow: item.lower, zoneHigh: item.upper, label: item.status }));
-    if ("structure" === "scenario") {
-      const plan = state.scenarioContext?.primaryScenario?.riskPlan;
-      if (!plan?.available) return [];
-      return [plan.watchArea, plan.invalidation, ...(plan.targets || [])].filter(Boolean).map((item, index) => ({ ...item, layer: "scenario", timeframe, source: "scenario", sourceId: item.id || index, price: item.level || item.midpoint, zoneLow: item.lower || item.zoneLower || item.level, zoneHigh: item.upper || item.zoneUpper || item.level, label: item.label || "Reference" }));
+    const context = window.BtcDash.state?.structureContexts?.[timeframe];
+    if (!context?.available) return [];
+    const swings = getDisplaySwings(context).slice(-40).map((item) => ({
+      layer: "structure",
+      timeframe,
+      source: "structure-v2",
+      sourceId: item.id || `${item.time}-${item.label}`,
+      type: item.type || "swing",
+      price: item.price,
+      startTime: item.time,
+      endTime: item.time,
+      label: item.label,
+      drawPolicy: "summaryOnly",
+      meta: { structureType: item.structureType, layer: item.layer }
+    }));
+    const bos = context.bosChoch;
+    if (bos && bos.type && bos.type !== "None") {
+      swings.push({ layer: "structure", timeframe, source: "structure-v2", sourceId: `bos-${bos.confirmedAtTime || bos.level}`, type: bos.type, price: bos.level, startTime: bos.confirmedAtTime, endTime: bos.confirmedAtTime, label: `${bos.type} ${bos.confirmation}`, drawPolicy: "summaryOnly", meta: bos });
     }
-    return [];
+    const sweep = context.sweepStatus;
+    if (sweep?.hasSweep) {
+      swings.push({ layer: "structure", timeframe, source: "structure-v2", sourceId: `sweep-${sweep.sweepTime || sweep.sweptLevel}`, type: "sweep", price: sweep.sweptLevel, startTime: sweep.sweepTime, endTime: sweep.sweepTime, label: "Sweep Context", drawPolicy: "summaryOnly", meta: sweep });
+    }
+    return swings;
   }
 
-  function clearStructureOverlay(timeframe = null) {
+  function clearStructureOverlay() {
+    window.BtcDash.chart.markers?.clearMarkers?.("structure");
     window.BtcDash.chart.overlayRegistry?.clearLayer("structure");
     window.BtcDash.chart.clearChartOverlayLayer?.("structure");
   }
@@ -34,8 +49,9 @@
     clearStructureOverlay(timeframe);
     if (!isLayerEnabled()) return [];
     const items = buildStructureOverlayItems(timeframe);
-    if ("structure" === "sr" || "structure" === "fvg" || "structure" === "confluence" || "structure" === "scenario") return window.BtcDash.chart.overlays.zone?.renderZoneOverlayBatch(items, { layer: "structure", timeframe }) || [];
-    return items.map((item) => window.BtcDash.chart.overlayRegistry?.registerOverlay({ ...item, layer: "structure", timeframe: item.timeframe || timeframe, drawPolicy: item.drawPolicy || "summaryOnly" })).filter(Boolean);
+    const markers = items.map((item) => ({ time: item.startTime, price: item.price, text: item.label, shape: item.type === "low" ? "arrowUp" : "arrowDown", type: item.type, label: item.label }));
+    window.BtcDash.chart.markers?.renderMarkers?.(timeframe, { structure: markers });
+    return items.map((item) => window.BtcDash.chart.overlayRegistry?.registerOverlay({ ...item, key: `${item.layer}|${item.timeframe}|${item.sourceId}|${item.type}|${item.price}` })).filter(Boolean);
   }
 
   window.BtcDash.chart.overlays.structure = { renderStructureOverlay, clearStructureOverlay, buildStructureOverlayItems };

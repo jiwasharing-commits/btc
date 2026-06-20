@@ -1,6 +1,7 @@
 const marketData = { "1W": [], "1D": [], "4H": [], "1H": [] };
 const runningCandles = { "1W": null, "1D": null, "4H": null, "1H": null };
 const structureContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
+const structureDebugStats = { enabled: false, lastBuildAt: null, rawPivotCount: 0, internalSwingCount: 0, majorSwingCount: 0, displayedLabelCount: 0, rejectedRawPivotCount: 0, replacedSwingCount: 0, sweepCount: 0, bosCount: 0, chochCount: 0, warnings: [] };
 const srContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
 let marketZonesContext = { upside: [], downside: [], nearestSupport: null, nearestResistance: null, activeTimeframe: null, summary: "" };
 const fvgContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
@@ -81,6 +82,7 @@ window.BtcDash.state = {
   marketData,
   runningCandles,
   structureContexts,
+  structureDebugStats,
   srContexts,
   fvgContexts,
   channelContexts,

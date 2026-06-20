@@ -139,8 +139,15 @@
   });
   registerPipelineStep({
     name: "Structure",
-    available: () => typeof resolveFunction("rebuildAllStructureContexts") === "function",
-    run: () => runNamedAnalysisFunction("rebuildAllStructureContexts")
+    available: () => typeof window.BtcDash.engines?.structure?.rebuildStructureContexts === "function" || typeof resolveFunction("rebuildAllStructureContexts") === "function",
+    run: () => {
+      const structureEngine = window.BtcDash.engines?.structure;
+      if (typeof structureEngine?.rebuildStructureContexts === "function") {
+        structureEngine.rebuildStructureContexts({ reason: "pipeline" });
+        return { status: "success", message: "Structure V2 contexts rebuilt" };
+      }
+      return runNamedAnalysisFunction("rebuildAllStructureContexts");
+    }
   });
   registerPipelineStep({
     name: "S/R",

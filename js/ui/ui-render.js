@@ -127,7 +127,9 @@ function renderTable() {
 }
 
 function formatStructureSequence(context) {
-  return context?.sequence?.length ? context.sequence.map((swing) => swing.label).join(" → ") : "No clear structure detected";
+  const sequence = context?.sequence || [];
+  if (!sequence.length) return "No clear structure detected";
+  return sequence.map((swing) => typeof swing === "string" ? swing : swing.label).filter(Boolean).join(" → ");
 }
 
 function renderMtfStructureCards() {
@@ -340,11 +342,11 @@ function renderDetail() {
   const latest = getGlobalLatestPrice();
   const data = {
     'Indicator': `<div class="selector-row">${['Volume','RSI','MACD','ATR','Volatility','Structure'].map(metric).join('')}</div>${grid([['Volume Status', last ? 'Loaded' : 'Waiting Data'],['Last Volume', fmtVolume(last?.volume)],['RSI','Placeholder'],['ATR','Placeholder'],['Volatility','Placeholder']], 'detail-grid six')}<div class="mini-chart"></div>`,
-    'Pattern Summary': `${grid([['Trend', simpleTrend(getActiveTimeframe(), 'Uptrend', 'Downtrend')],['Structure','HH-HL placeholder'],['Nearest Zone','Pending logic'],['FVG Status','Placeholder'],['Channel Position', (channelContexts[getActiveTimeframe()] ?? createEmptyChannelContext(getActiveTimeframe())).status],['Confluence', confluenceContext.strongestCandidate ? `${confluenceContext.strongestCandidate.scoreLabel} ${confluenceContext.strongestCandidate.score}/10` : 'No Candidate'],['Reaction', reactionStudyContext.strongestReaction ? `${reactionStudyContext.strongestReaction.reactionLabel} ${reactionStudyContext.strongestReaction.reactionScore}/10` : 'Reaction study not available'],['Warning','Real logic pending']], 'detail-grid six')}<div class="summary-box card">Chart and table now use real repository candles; pattern analysis cards remain placeholders for the next phase.</div>${renderMarketZonesCards()}`,
+    'Pattern Summary': window.BtcDash.ui.panels?.patternSummary?.renderPanel?.() || `<div class="panel-empty-state">Pattern summary not available.</div>`,
     'Scenario Plan': renderScenarioPlanTab(),
-    'Structure': (() => {
+    'Structure': window.BtcDash.ui.panels?.structure?.renderPanel?.() || (() => {
       const context = structureContexts[getActiveTimeframe()] ?? createEmptyStructureContext(getActiveTimeframe());
-      return `${grid([['Active TF Bias', context.bias],['Structure Status', context.status],['Last Swing High', fmtPrice(context.lastSwingHigh?.price)],['Last Swing Low', fmtPrice(context.lastSwingLow?.price)],['BOS / CHoCH', context.bosChoch.status],['Sequence', formatStructureSequence(context)]], 'detail-grid six')}<div class="structure-note card">${context.summary}</div>${renderMtfStructureCards()}`;
+      return `${grid([['Active TF Bias', context.bias],['Structure Status', context.status],['Last Swing High', fmtPrice(context.lastSwingHigh?.price)],['Last Swing Low', fmtPrice(context.lastSwingLow?.price)],['BOS / CHoCH', context.bosChoch?.status],['Sequence', formatStructureSequence(context)]], 'detail-grid six')}<div class="structure-note card">${context.summary}</div>${renderMtfStructureCards()}`;
     })(),
     'FVG': renderFvgTab(),
     'S/R': renderSrTab(),

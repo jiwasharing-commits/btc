@@ -250,3 +250,41 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
 .audit-section h4 { margin: 0 0 6px; font-size: .82rem; }
 .audit-section p, .audit-section small, .audit-debug-meta { color: var(--muted); font-size: .76rem; }
 .audit-debug-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+
+.structure-v2-panel { gap: 0.85rem; }
+.structure-layer-badge,
+.structure-bos-badge,
+.structure-choch-badge,
+.structure-sweep-badge,
+.protected-level-chip {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.7);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.structure-bias-bullish { color: #4ade80; }
+.structure-bias-bearish { color: #fb7185; }
+.structure-bias-neutral { color: #cbd5e1; }
+.structure-debug-note {
+  margin: 0.35rem 0 0.75rem;
+  color: #94a3b8;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+.structure-card .compact-panel-grid {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin-top: 0.65rem;
+}
+.structure-card small {
+  display: block;
+  margin-top: 0.6rem;
+  color: #94a3b8;
+  line-height: 1.4;
+}

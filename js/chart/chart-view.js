@@ -225,7 +225,8 @@ function addDummyMarkers(closedCandles, running, timeframe) {
   const firstVisibleTime = closedCandles[0]?.open_time ?? 0;
   const context = structureContexts[timeframe];
   if (activeLayers.Structure && context?.available) {
-    markers.push(...context.labels
+    const structureLabels = context.displaySwings || context.displayLabels || context.labels || [];
+    markers.push(...structureLabels
       .filter((label) => label.time >= firstVisibleTime)
       .slice(-28)
       .map((label) => ({

@@ -38,6 +38,19 @@
   };
 
 
+
+  const STRUCTURE_V2_CONFIG = {
+    enabled: true,
+    timeframes: ["1W", "1D", "4H", "1H"],
+    "1W": { role: "macro", pivotLeft: 4, pivotRight: 4, minMovePct: 8.0, atrLength: 14, atrMultiplier: 1.8, minBarGap: 5, eqTolerancePct: 1.5, breakBufferPct: 0.40, weakBreakBufferPct: 0.15, maxRawPivots: 80, maxInternalSwings: 16, maxMajorSwings: 8, displayMaxLabels: 6, protectedLevelLookback: 8, layerRules: { internal: { minMoveScale: 0.75, minBarGapScale: 0.75, maxSwings: 16 }, major: { minMoveScale: 1.00, minBarGapScale: 1.00, maxSwings: 8 } }, label: "Weekly Macro Structure" },
+    "1D": { role: "context", pivotLeft: 4, pivotRight: 4, minMovePct: 4.0, atrLength: 14, atrMultiplier: 1.6, minBarGap: 6, eqTolerancePct: 0.9, breakBufferPct: 0.25, weakBreakBufferPct: 0.12, maxRawPivots: 120, maxInternalSwings: 24, maxMajorSwings: 12, displayMaxLabels: 12, protectedLevelLookback: 12, layerRules: { internal: { minMoveScale: 0.70, minBarGapScale: 0.75, maxSwings: 24 }, major: { minMoveScale: 1.00, minBarGapScale: 1.00, maxSwings: 12 } }, label: "Daily Context Structure" },
+    "4H": { role: "setup", pivotLeft: 4, pivotRight: 4, minMovePct: 2.0, atrLength: 14, atrMultiplier: 1.4, minBarGap: 10, eqTolerancePct: 0.5, breakBufferPct: 0.15, weakBreakBufferPct: 0.08, maxRawPivots: 160, maxInternalSwings: 32, maxMajorSwings: 16, displayMaxLabels: 14, protectedLevelLookback: 16, layerRules: { internal: { minMoveScale: 0.65, minBarGapScale: 0.70, maxSwings: 32 }, major: { minMoveScale: 1.15, minBarGapScale: 1.15, maxSwings: 16 } }, label: "4H Setup Structure" },
+    "1H": { role: "timing", pivotLeft: 5, pivotRight: 5, minMovePct: 1.0, atrLength: 14, atrMultiplier: 1.2, minBarGap: 12, eqTolerancePct: 0.3, breakBufferPct: 0.10, weakBreakBufferPct: 0.05, maxRawPivots: 200, maxInternalSwings: 40, maxMajorSwings: 18, displayMaxLabels: 18, protectedLevelLookback: 20, layerRules: { internal: { minMoveScale: 0.65, minBarGapScale: 0.70, maxSwings: 40 }, major: { minMoveScale: 1.20, minBarGapScale: 1.20, maxSwings: 18 } }, label: "1H Timing Structure" },
+    biasRules: { bullishLabels: ["HH", "HL"], bearishLabels: ["LH", "LL"], requireCloseConfirmedBreak: true, wickBreakIsSweep: true, weakBreakNeedsConfirmation: true, oneHourCannotOverrideHigherBias: true, weeklyBiasOnlyFromWeeklyStructure: true },
+    displayRules: { rawPivotDefaultVisible: false, showInternalStructure: true, showMajorStructure: true, showBosChochMarkers: true, showSweepMarkers: true, maxLabelsFallback: 12 },
+    wording: { rawPivot: "Raw Pivot", internalStructure: "Internal Structure", majorStructure: "Major Structure", closeConfirmed: "Close Confirmed", wickOnly: "Wick Only / Sweep Context", needsConfirmation: "Needs Confirmation", planningOnly: "Planning context only.", referenceOnly: "Reference only." }
+  };
+
   const AUDIT_QUALITY_CONFIG = {
     enabled: true,
     timeframes: ["1W", "1D", "4H", "1H"],
@@ -62,7 +75,7 @@
     scoreRules: { minScore: 0, maxScore: 10, scoreKeys: ["score", "reactionScore", "confluenceScore", "scenarioScore", "riskScore", "qualityScore", "planningScore", "confidenceScore", "strengthScore"] },
     contextRules: {
       requiredByContext: {
-        structureContexts: ["available", "timeframe", "labels", "bias", "bosChoch", "summary"],
+        structureContexts: ["available", "timeframe", "rawPivots", "internalSwings", "majorSwings", "analysisSwings", "displaySwings", "labels", "trendState", "bias", "bosChoch", "summary"],
         srContexts: ["available", "timeframe", "supportZones", "resistanceZones", "nearestSupport", "nearestResistance", "summary"],
         fvgContexts: ["available", "timeframe", "activeFvgs", "nearestFvg", "summary"],
         channelContexts: ["available", "timeframe", "status", "direction", "summary"],
@@ -84,6 +97,7 @@
     ENGINE_MODULE_NAMES,
     ENGINE_PIPELINE_ORDER,
     FUTURE_ENGINE_FLAGS,
+    STRUCTURE_V2_CONFIG,
     AUDIT_QUALITY_CONFIG
   });
 })();
