@@ -209,7 +209,10 @@
   }
 
   function runAuditQuality(options = {}) {
+    const started = performance.now();
     const config = cfg();
+    const perfAudit = window.BtcDash.config?.PERFORMANCE_CONFIG?.audit || {};
+    const isPipelineLight = options.triggeredByPipeline && options.includeDeepScan !== true && options.mode !== "deep";
     if (config.enabled === false) return createEmptyAuditQualityContext("Audit disabled");
     const runtime = state().auditRuntime;
     const at = Date.now();
@@ -221,16 +224,17 @@
       const scoreAudit = auditScoreSanity();
       const rebuildAudit = auditRebuildPipeline();
       const overlayAudit = auditOverlayRegistry();
-      const autoscaleAudit = auditAutoscaleRisk();
-      const marketZoneAudit = auditMarketZoneQuality();
-      const mtfAudit = auditMtfGuard();
+      const autoscaleAudit = isPipelineLight ? { issues: [] } : auditAutoscaleRisk();
+      const marketZoneAudit = isPipelineLight ? { issues: [] } : auditMarketZoneQuality();
+      const mtfAudit = isPipelineLight ? { issues: [] } : auditMtfGuard();
       const performanceAudit = auditPerformanceLimits();
-      const issues = limitIssues([dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, performanceAudit].flatMap((x) => x.issues || []));
+      let issues = limitIssues([dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, performanceAudit].flatMap((x) => x.issues || []));
+      if (isPipelineLight) issues = issues.slice(0, perfAudit.maxIssuesInNormalRun || 80);
       const criticalIssues = issues.filter((issue) => issue.severity === "critical");
       const warningIssues = issues.filter((issue) => issue.severity === "warning");
       const infoIssues = issues.filter((issue) => issue.severity === "info");
       const status = criticalIssues.length ? "Critical" : warningIssues.length ? "Warning" : "OK";
-      const context = { available: true, status, severity: criticalIssues.length ? "critical" : warningIssues.length ? "warning" : "info", lastRunAt: nowIso(), lastRunReason: options.reason || "manual", summary: { criticalCount: criticalIssues.length, warningCount: warningIssues.length, infoCount: infoIssues.length, totalIssues: issues.length }, dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, performanceAudit, issues, criticalIssues, warningIssues, infoIssues, debugStats: { triggeredByPipeline: Boolean(options.triggeredByPipeline), includeDeepScan: Boolean(options.includeDeepScan), issueLimit: config.safeScanRules?.maxTotalIssues || 300 }, message: status === "OK" ? "Audit OK. Planning context only." : config.wording?.criticalBanner || "Review debug audit before relying on context." };
+      const context = { available: true, status, severity: criticalIssues.length ? "critical" : warningIssues.length ? "warning" : "info", lastRunAt: nowIso(), lastRunReason: options.reason || "manual", summary: { criticalCount: criticalIssues.length, warningCount: warningIssues.length, infoCount: infoIssues.length, totalIssues: issues.length }, dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, performanceAudit, issues, criticalIssues, warningIssues, infoIssues, debugStats: { triggeredByPipeline: Boolean(options.triggeredByPipeline), includeDeepScan: Boolean(options.includeDeepScan), mode: isPipelineLight ? "light" : (options.mode || "deep"), durationMs: Number((performance.now() - started).toFixed(1)), issueLimit: isPipelineLight ? (perfAudit.maxIssuesInNormalRun || 80) : (config.safeScanRules?.maxTotalIssues || 300) }, message: status === "OK" ? "Audit OK. Planning context only." : config.wording?.criticalBanner || "Review debug audit before relying on context." };
       state().auditQualityContext = context;
       return context;
     } catch (error) {

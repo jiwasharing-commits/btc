@@ -4,7 +4,8 @@
   const markerState = { byLayer: {} };
 
   function normalizeMarker(marker, layer, timeframe) {
-    return { ...marker, layer, timeframe, key: `${layer}|${timeframe}|${marker.time}|${marker.text || marker.label || marker.shape || "marker"}` };
+    const chartTime = typeof marker.time === "number" && marker.time > 10000000000 ? Math.floor(marker.time / 1000) : marker.time;
+    return { ...marker, chartTime, layer, timeframe, key: `${layer}|${timeframe}|${marker.time}|${marker.text || marker.label || marker.shape || "marker"}` };
   }
 
   function renderMarkers(timeframe, markerGroups = {}) {
@@ -12,6 +13,7 @@
       clearMarkers(layer);
       const normalized = (markers || []).map((marker) => normalizeMarker(marker, layer, timeframe));
       markerState.byLayer[layer] = normalized;
+      window.BtcDash.chart.applyLayerMarkers?.(layer, normalized.map((marker) => ({ ...marker, time: marker.chartTime })));
       normalized.forEach((marker) => window.BtcDash.chart.overlayRegistry?.registerOverlay({
         id: marker.key,
         key: marker.key,
@@ -33,6 +35,7 @@
   function clearMarkers(layer) {
     if (!layer) return clearAllMarkers();
     delete markerState.byLayer[layer];
+    window.BtcDash.chart.clearLayerMarkers?.(layer);
     window.BtcDash.chart.overlayRegistry?.clearLayer(layer);
     return markerState;
   }
@@ -43,5 +46,6 @@
     return markerState;
   }
 
-  window.BtcDash.chart.markers = { renderMarkers, clearMarkers, clearAllMarkers, normalizeMarker };
+  function getMarkerState() { return { byLayer: { ...markerState.byLayer } }; }
+  window.BtcDash.chart.markers = { renderMarkers, clearMarkers, clearAllMarkers, normalizeMarker, getMarkerState };
 })();

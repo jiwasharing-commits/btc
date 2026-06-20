@@ -1,5 +1,9 @@
 (function () {
   function rebuildActiveAnalysis(reason) {
+    if (/workspace|range|layer|tab|render/i.test(reason || "") && window.BtcDash?.pipeline?.renderOnly) {
+      window.BtcDash.pipeline.renderOnly(reason);
+      return;
+    }
     if (window.BtcDash?.pipeline?.rebuildForTimeframe) {
       window.BtcDash.pipeline.rebuildForTimeframe(getActiveTimeframe(), { reason, render: false });
       return;
@@ -12,7 +16,7 @@
 
   function setWorkspace(name) {
     activeWorkspace = name;
-    rebuildActiveAnalysis("workspace-change");
+    if (window.BtcDash?.pipeline?.rerenderActiveView) window.BtcDash.pipeline.rerenderActiveView("workspace-switch");
     renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace');
     renderSummary();
     renderWorkspace();
@@ -23,14 +27,14 @@
     activeDetail = name;
     renderTabs('.detail-tabs', details, activeDetail, 'setDetail');
     renderDetail();
+    window.BtcDash?.pipeline?.renderOnly?.("bottom-tab-switch");
   }
 
   function setRange(range) {
     rangeState[activeWorkspace] = range;
-    rebuildActiveAnalysis("range-change");
-    renderSummary();
     renderWorkspace();
     renderDetail();
+    window.BtcDash?.pipeline?.renderOnly?.("range-change");
   }
 
   function bindEventHandlers() {
@@ -56,7 +60,7 @@
       window.BtcDash.chart?.setLayerState?.(layer, enabled);
       activeLayers[layer] = enabled;
       button.classList.toggle('active', activeLayers[layer]);
-      renderWorkspace();
+      window.BtcDash?.pipeline?.renderOnly?.("layer-toggle");
     });
   }
 

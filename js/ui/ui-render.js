@@ -374,20 +374,28 @@ function renderAuditCriticalBanner() {
   target.parentNode.insertBefore(banner, target);
 }
 
-function renderAll() {
-  renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace');
-  renderTabs('.detail-tabs', details, activeDetail, 'setDetail');
-  renderLayerControls();
-  renderDataStatus();
-  renderBinanceDebug();
-  renderAuditCriticalBanner();
-  renderSummary();
-  renderWorkspace();
+const uiRenderStats = { renderCount: 0, activePanelRenderCount: 0, lastRenderAt: null, lastMode: "full" };
+function renderAll(options = {}) {
+  const activeOnly = Boolean(options.activeOnly);
+  if (!activeOnly) {
+    renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace');
+    renderTabs('.detail-tabs', details, activeDetail, 'setDetail');
+    renderLayerControls();
+    renderDataStatus();
+    renderBinanceDebug();
+    renderAuditCriticalBanner();
+    renderSummary();
+    renderWorkspace();
+  }
   renderDetail();
+  uiRenderStats.renderCount += 1;
+  if (activeOnly) uiRenderStats.activePanelRenderCount += 1;
+  uiRenderStats.lastRenderAt = new Date().toISOString();
+  uiRenderStats.lastMode = activeOnly ? "activeOnly" : "full";
 }
 
-function renderDashboardUi() {
-  renderAll();
+function renderDashboardUi(options = {}) {
+  renderAll(options);
   const runtime = window.BtcDash.state?.uiRuntime;
   if (runtime) {
     runtime.activeBottomTab = activeDetail;
@@ -396,11 +404,12 @@ function renderDashboardUi() {
     runtime.renderCount += 1;
   }
 }
+function getRenderStats() { return { ...uiRenderStats }; }
 function renderHeader() { return true; }
 function renderGlobalSummary() { return renderSummary(); }
 function renderBottomTabs() { return renderTabs('.detail-tabs', details, activeDetail, 'setDetail'); }
 function renderActivePanel() { return renderDetail(); }
-function rerenderUi(reason = "manual") { renderDashboardUi(); return { reason, rendered: true }; }
+function rerenderUi(reason = "manual") { renderDashboardUi({ activeOnly: /tab|layer|render-only/i.test(reason) }); return { reason, rendered: true }; }
 
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.ui = {
@@ -427,6 +436,7 @@ window.BtcDash.ui = {
   renderReactionStudyTab,
   renderAuditCriticalBanner,
   renderDashboardUi,
+  getRenderStats,
   renderHeader,
   renderGlobalSummary,
   renderBottomTabs,
@@ -436,3 +446,4 @@ window.BtcDash.ui = {
 window.BtcDash.ui.renderDashboard = renderDashboardUi;
 window.renderDashboard = renderDashboardUi;
 window.renderUi = renderDashboardUi;
+window.BtcDash.ui.getRenderStats = getRenderStats;

@@ -35,7 +35,7 @@
     const overlay = normalizeZoneOverlay(row, options);
     if (!overlay) return null;
     overlay.drawPolicy = window.BtcDash.chart.autoscaleGuard?.resolveOverlayDrawPolicy(overlay, overlay.timeframe) || overlay.drawPolicy;
-    if (overlay.drawPolicy !== "show") return window.BtcDash.chart.overlayRegistry?.registerOverlay(overlay) || overlay;
+    if (overlay.drawPolicy !== "show") return null;
     if (typeof window.BtcDash.chart?.addBoundedZoneBox === "function") {
       const style = resolveZoneStyle({ ...row, layer: overlay.layer }, options);
       const element = window.BtcDash.chart.addBoundedZoneBox({ type: overlay.layer, className: style.className, label: overlay.label, lower: overlay.zoneLow, upper: overlay.zoneHigh, startTime: overlay.startTime, endTime: overlay.endTime, overlayKey: overlay.key });
@@ -43,7 +43,7 @@
     }
     return window.BtcDash.chart.overlayRegistry?.registerOverlay(overlay) || overlay;
   }
-  function renderZoneOverlayBatch(rows = [], options = {}) { return rows.map((row) => renderZoneOverlay(row, options)).filter(Boolean); }
+  function renderZoneOverlayBatch(rows = [], options = {}) { const max = window.BtcDash.config?.PERFORMANCE_CONFIG?.overlay?.maxZonesPerLayer || 24; return rows.filter((row) => (row?.drawPolicy || options.drawPolicy || "show") === "show").slice(0, max).map((row) => renderZoneOverlay(row, options)).filter(Boolean); }
   function clearZoneOverlayLayer(layer, timeframe = null) {
     if (timeframe) window.BtcDash.chart.overlayRegistry?.clearTimeframe(timeframe);
     else window.BtcDash.chart.overlayRegistry?.clearLayer(layer);

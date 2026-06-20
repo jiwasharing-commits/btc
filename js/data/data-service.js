@@ -91,6 +91,27 @@ function rebuildAnalysisAfterData(reason, render = false) {
   rebuildReactionStudyContext(getActiveTimeframe());
 }
 
+function candleClosedKey(candle) {
+  return candle ? `${candle.open_time || candle.time}|${candle.close_time || ""}|${candle.close || ""}|${candle.volume || 0}` : "";
+}
+
+function getChangedClosedTimeframes(previousData = {}, nextData = {}, runningMap = runningCandles) {
+  const changedTimeframes = [];
+  const runningOnlyTimeframes = [];
+  const noChangeTimeframes = [];
+  Object.keys(marketData).forEach((timeframe) => {
+    const prev = previousData[timeframe] || [];
+    const next = nextData[timeframe] || [];
+    const prevLast = prev.at(-1);
+    const nextLast = next.at(-1);
+    const closedChanged = prev.length !== next.length || candleClosedKey(prevLast) !== candleClosedKey(nextLast);
+    if (closedChanged) changedTimeframes.push(timeframe);
+    else if (runningMap?.[timeframe]) runningOnlyTimeframes.push(timeframe);
+    else noChangeTimeframes.push(timeframe);
+  });
+  return { changedTimeframes, runningOnlyTimeframes, noChangeTimeframes };
+}
+
 async function loadAllRepoData({ runAutoUpdate = autoUpdateEnabled } = {}) {
   loading = true;
   loadError = "";
@@ -100,9 +121,10 @@ async function loadAllRepoData({ runAutoUpdate = autoUpdateEnabled } = {}) {
     const repoData = await loadRepoData();
     const cachedData = loadCacheData();
     applyRepoAndCache(repoData, cachedData);
-    rebuildAnalysisAfterData("repo-data-load", false);
-    dataStatusMessage = cachedData ? "Repo data loaded and merged with local cache." : "Repo data loaded.";
+    dataStatusMessage = cachedData ? "Repo data loaded and merged with local cache. Building analysis context..." : "Repo data loaded. Building analysis context...";
     loading = false;
+    renderAll();
+    rebuildAnalysisAfterData("repo-data-load", false);
     renderAll();
     if (runAutoUpdate) await autoUpdateFromBinance();
   } catch (error) {
@@ -206,9 +228,10 @@ function splitClosedAndRunning(candles) {
 async function updateSingleTimeframeFromBinance(timeframe) {
   const result = await fetchMissingBinanceCandles(timeframe);
   const { closed, running } = splitClosedAndRunning(result.candles);
-  const beforeCount = marketData[timeframe].length;
+  const before = marketData[timeframe].slice();
   marketData[timeframe] = mergeCandles(marketData[timeframe], closed);
-  const addedClosed = marketData[timeframe].length - beforeCount;
+  const addedClosed = marketData[timeframe].length - before.length;
+  const closedChanged = before.length !== marketData[timeframe].length || candleClosedKey(before.at(-1)) !== candleClosedKey(marketData[timeframe].at(-1));
   runningCandles[timeframe] = running;
 
   const debug = {
@@ -216,6 +239,8 @@ async function updateSingleTimeframeFromBinance(timeframe) {
     requestStartTime: result.requestStartTime,
     fetchedRows: result.fetchedRows,
     addedClosed,
+    closedChanged,
+    runningOnly: Boolean(running) && !closedChanged,
     running: Boolean(running),
     endpoint: result.endpoint
   };
@@ -230,6 +255,7 @@ async function autoUpdateFromBinance() {
   renderBinanceDebug();
   const updateSummary = {};
 
+  const previousData = Object.fromEntries(Object.keys(marketData).map((tf) => [tf, marketData[tf].slice()]));
   for (const timeframe of ["1W", "1D", "4H", "1H"]) {
     try {
       updateSummary[timeframe] = await updateSingleTimeframeFromBinance(timeframe);
@@ -238,17 +264,16 @@ async function autoUpdateFromBinance() {
       binanceDebug[timeframe] = { error: error.message };
       console.info("[Binance Update]", timeframe, { error: error.message });
     }
-    renderAll();
+    renderDataStatus();
+    renderBinanceDebug();
   }
 
-  rebuildAllStructureContexts();
-  rebuildAllSrContexts();
-  rebuildAllFvgContexts();
-  rebuildAllChannelContexts();
-  marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
-  rebuildConfluenceContext(getActiveTimeframe());
-  rebuildScenarioContext(getActiveTimeframe());
-  rebuildReactionStudyContext(getActiveTimeframe());
+  const changeSummary = getChangedClosedTimeframes(previousData, marketData, runningCandles);
+  if (changeSummary.changedTimeframes.length && window.BtcDash?.pipeline?.rebuildForChangedTimeframes) {
+    window.BtcDash.pipeline.rebuildForChangedTimeframes(changeSummary.changedTimeframes, { reason: "binance-closed-candle-update", render: false });
+  } else if (window.BtcDash?.pipeline?.renderOnly) {
+    window.BtcDash.pipeline.renderOnly("binance-running-candle-preview");
+  }
   const entries = Object.entries(updateSummary);
   const successEntries = entries.filter(([, result]) => !result.error);
   const totalAdded = successEntries.reduce((sum, [, result]) => sum + (result.addedClosed ?? 0), 0);
@@ -283,7 +308,8 @@ window.BtcDash.dataService = {
   fetchMissingBinanceCandles,
   splitClosedAndRunning,
   updateSingleTimeframeFromBinance,
-  autoUpdateFromBinance
+  autoUpdateFromBinance,
+  getChangedClosedTimeframes
 };
 
 window.BtcDash.data = window.BtcDash.data || {};

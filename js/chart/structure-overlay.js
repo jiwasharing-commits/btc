@@ -15,7 +15,7 @@
   function buildStructureOverlayItems(timeframe) {
     const context = window.BtcDash.state?.structureContexts?.[timeframe];
     if (!context?.available) return [];
-    const swings = getDisplaySwings(context).slice(-40).map((item) => ({
+    const swings = getDisplaySwings(context).filter((item) => item?.label && item?.price && item?.time).slice(-(window.BtcDash.config?.PERFORMANCE_CONFIG?.overlay?.maxMarkersPerLayer || 80)).map((item) => ({
       layer: "structure",
       timeframe,
       source: "structure-v2",
@@ -25,7 +25,7 @@
       startTime: item.time,
       endTime: item.time,
       label: item.label,
-      drawPolicy: "summaryOnly",
+      drawPolicy: "show",
       meta: { structureType: item.structureType, layer: item.layer }
     }));
     const bos = context.bosChoch;
@@ -49,10 +49,22 @@
     clearStructureOverlay(timeframe);
     if (!isLayerEnabled()) return [];
     const items = buildStructureOverlayItems(timeframe);
-    const markers = items.map((item) => ({ time: item.startTime, price: item.price, text: item.label, shape: item.type === "low" ? "arrowUp" : "arrowDown", type: item.type, label: item.label }));
+    const markers = items.map((item) => ({ time: item.startTime, price: item.price, text: item.label, shape: item.type === "low" ? "arrowUp" : "arrowDown", position: item.type === "low" ? "belowBar" : "aboveBar", color: item.type === "low" ? "#facc15" : "#38bdf8", type: item.type, label: item.label }));
     window.BtcDash.chart.markers?.renderMarkers?.(timeframe, { structure: markers });
-    return items.map((item) => window.BtcDash.chart.overlayRegistry?.registerOverlay({ ...item, key: `${item.layer}|${item.timeframe}|${item.sourceId}|${item.type}|${item.price}` })).filter(Boolean);
+    const registered = items.map((item) => window.BtcDash.chart.overlayRegistry?.registerOverlay({ ...item, key: `${item.layer}|${item.timeframe}|${item.sourceId}|${item.type}|${item.price}` })).filter(Boolean);
+    window.BtcDash.chart._lastStructureMarkerRender = { timeframe, markerCount: markers.length, lastRenderAt: new Date().toISOString() };
+    return registered;
   }
 
-  window.BtcDash.chart.overlays.structure = { renderStructureOverlay, clearStructureOverlay, buildStructureOverlayItems };
+  function debugStructureMarkers(timeframe) {
+    const context = window.BtcDash.state?.structureContexts?.[timeframe];
+    const displaySwings = getDisplaySwings(context);
+    const layerEnabled = isLayerEnabled();
+    const registryCount = window.BtcDash.chart.overlayRegistry?.getOverlaysByLayer?.("structure")?.length || 0;
+    const markerCount = window.BtcDash.chart.markers?.getMarkerState?.()?.byLayer?.structure?.length || 0;
+    return { timeframe, displaySwings: displaySwings.length, markerCount, layerEnabled, registryCount, lastRenderAt: window.BtcDash.chart._lastStructureMarkerRender?.lastRenderAt || null };
+  }
+
+  window.BtcDash.chart.debugStructureMarkers = debugStructureMarkers;
+  window.BtcDash.chart.overlays.structure = { renderStructureOverlay, clearStructureOverlay, buildStructureOverlayItems, debugStructureMarkers };
 })();

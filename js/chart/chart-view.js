@@ -247,6 +247,26 @@ function addDummyMarkers(closedCandles, running, timeframe) {
   candleSeries.setMarkers(markers);
 }
 
+function applyLayerMarkers(layer, markers = []) {
+  if (!candleSeries) return [];
+  const normalized = (markers || []).slice(0, window.BtcDash.config?.PERFORMANCE_CONFIG?.overlay?.maxMarkersPerLayer || 80).map((marker) => ({
+    time: typeof marker.time === "number" && marker.time > 10000000000 ? Math.floor(marker.time / 1000) : marker.time,
+    position: marker.position || (marker.type === "low" ? "belowBar" : "aboveBar"),
+    color: marker.color || (marker.type === "low" ? "#facc15" : "#38bdf8"),
+    shape: marker.shape || (marker.type === "low" ? "arrowUp" : "arrowDown"),
+    text: marker.text || marker.label || ""
+  })).filter((marker) => marker.time && marker.text);
+  const existing = Object.entries(window.BtcDash.chart?.markers?.getMarkerState?.()?.byLayer || {}).flatMap(([key, rows]) => key === layer ? [] : rows || []).map((m) => ({ time: m.chartTime || m.time, position: m.position, color: m.color, shape: m.shape, text: m.text || m.label || "" }));
+  candleSeries.setMarkers([...existing, ...normalized]);
+  return normalized;
+}
+
+function clearLayerMarkers(layer) {
+  if (!candleSeries) return;
+  const existing = Object.entries(window.BtcDash.chart?.markers?.getMarkerState?.()?.byLayer || {}).flatMap(([key, rows]) => key === layer ? [] : rows || []).map((m) => ({ time: m.chartTime || m.time, position: m.position, color: m.color, shape: m.shape, text: m.text || m.label || "" }));
+  candleSeries.setMarkers(existing);
+}
+
 function channelSeriesPoint(line, time) {
   const value = projectLineAtTime(line, time);
   return Number.isFinite(value) ? { time: Math.floor(time / 1000), value } : null;
@@ -447,6 +467,8 @@ window.BtcDash.chart = {
   renderActiveLayers,
   setLayerState,
   getLayerState,
+  applyLayerMarkers,
+  clearLayerMarkers,
   syncLayerControlsToState
 };
 window.BtcDash.renderChart = renderChart;

@@ -91,6 +91,20 @@
     "1H": { role: "timing", sourceSwingLayer: "internal", minAnchorSwings: 6, minTouchesTotal: 3, minTouchesMainSide: 2, requireAdditionalTouchAfterAnchors: true, maxActiveChannels: 1, maxHistoricalChannels: 5, maxProjectionBars: 80, maxProjectedDistancePct: 10, minChannelWidthAtr: 1.0, maxChannelWidthPct: 10, slopeTolerancePct: 0.35, breakBufferPct: 0.10, weakBreakBufferPct: 0.05, nearBoundaryPct: 0.45, toleranceAtrMultiplier: 0.45, maxFitErrorAtr: 1.10, minInlierRatio: 0.45, maxAnchorAgeBars: 360, maxRecentTouchBars: 180, minScoreToDisplay: 5.8, minScoreForMarketZone: 5.6, useZoneBands: true, autoscalePolicy: "candleOnly", label: "1H Timing Channel" }
   };
 
+  const PERFORMANCE_CONFIG = {
+    enabled: true,
+    initialLoad: { buildHeavyEnginesImmediately: false, heavyEngines: ["fvg", "channel"], deferHeavyEnginesMs: 250, allowProgressiveBuild: true },
+    rebuild: { debounceMs: 120, minIntervalMs: 250, skipIfInputHashUnchanged: true, maxPipelineRunsPerSecond: 2 },
+    binanceUpdate: { incrementalOnly: true, rebuildOnlyChangedTimeframes: true, skipRebuildIfNoClosedCandleChanged: true, runningCandleDoesNotTriggerAnalysisRebuild: true, debounceMs: 250 },
+    ui: { tabSwitchRebuildsEngine: false, layerToggleRebuildsEngine: false, workspaceSwitchCanRerenderChartOnly: true, renderOnlyActiveBottomPanel: true, skipUnchangedSummaryRender: true },
+    audit: { runDeepScanInPipeline: false, runLightAuditInPipeline: true, deepScanManualOnly: true, maxIssuesInNormalRun: 80 },
+    fvg: { maxScanCandles: { "1W": 260, "1D": 520, "4H": 700, "1H": 900 }, maxRawFvgs: { "1W": 80, "1D": 120, "4H": 160, "1H": 200 }, maxVisibleFvgs: 6 },
+    channel: { maxSourceSwings: { "1W": 16, "1D": 24, "4H": 32, "1H": 40 }, maxCandidatePairs: { "1W": 80, "1D": 120, "4H": 180, "1H": 240 }, maxActiveChannels: 1, skipCandidateIfTooOld: true },
+    overlay: { maxMarkersPerLayer: 80, maxZonesPerLayer: 24, clearBeforeRender: true, preventDuplicate: true },
+    debug: { enablePerformanceMarks: true, logSlowSteps: true, slowStepMs: 150, exposePerformanceSnapshot: true }
+  };
+
+
   const AUDIT_QUALITY_CONFIG = {
     enabled: true,
     timeframes: ["1W", "1D", "4H", "1H"],
@@ -143,6 +157,7 @@
     SR_V2_CONFIG,
     FVG_V2_CONFIG,
     CHANNEL_V2_CONFIG,
+    PERFORMANCE_CONFIG,
     AUDIT_QUALITY_CONFIG
   });
 })();
