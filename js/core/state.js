@@ -40,6 +40,40 @@ const uiRuntime = {
   renderCount: 0,
   warnings: []
 };
+const auditQualityContext = {
+  available: false,
+  status: "Not Run",
+  severity: "info",
+  lastRunAt: null,
+  lastRunReason: null,
+  summary: { criticalCount: 0, warningCount: 0, infoCount: 0, totalIssues: 0 },
+  dataAudit: {},
+  runningCandleAudit: {},
+  contextAudit: {},
+  scoreAudit: {},
+  rebuildAudit: {},
+  overlayAudit: {},
+  autoscaleAudit: {},
+  marketZoneAudit: {},
+  mtfAudit: {},
+  performanceAudit: {},
+  issues: [],
+  criticalIssues: [],
+  warningIssues: [],
+  infoIssues: [],
+  debugStats: {},
+  message: "Audit not run yet."
+};
+const auditRuntime = {
+  rebuildStack: [],
+  rebuildHistory: [],
+  lastPipelineSnapshot: null,
+  lastOverlaySnapshot: null,
+  lastLayerStateSnapshot: null,
+  lastAuditRunAt: null,
+  runCount: 0,
+  warnings: []
+};
 
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.state = {
@@ -86,5 +120,7 @@ window.BtcDash.state = {
   set resizeObserver(value) { resizeObserver = value; },
   channelSeries,
   chartRuntime,
-  uiRuntime
+  uiRuntime,
+  auditQualityContext,
+  auditRuntime
 };

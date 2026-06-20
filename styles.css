@@ -229,3 +229,24 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
 .source-tag, .score-chip, .status-badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 3px 7px; background: rgba(148, 163, 184, .12); color: #cbd5e1; font-size: .72rem; }
 .layer-control button:not(.active) { opacity: .58; border-color: rgba(148, 163, 184, .18); }
 @media (max-width: 700px) { .compact-panel-grid { grid-template-columns: 1fr; } }
+
+/* Prompt 3 Audit Quality UI */
+.audit-status-ok { border-color: rgba(34, 197, 94, .35); }
+.audit-status-warning { border-color: rgba(250, 204, 21, .42); }
+.audit-status-critical { border-color: rgba(248, 113, 113, .52); }
+.audit-summary-card { border: 1px solid rgba(56, 189, 248, .18); background: rgba(15, 23, 42, .78); }
+.audit-issue-list { margin: 8px 0 14px; padding: 0; display: grid; gap: 8px; list-style: none; }
+.audit-issue-item { border: 1px solid rgba(148, 163, 184, .16); border-radius: 12px; padding: 10px; background: rgba(15, 23, 42, .7); }
+.audit-issue-item strong { margin-right: 8px; font-size: .72rem; }
+.audit-issue-item span { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; }
+.audit-issue-item p { margin: 6px 0 0; color: #e2e8f0; font-size: .84rem; }
+.audit-issue-item small, .audit-issue-item em { display: block; color: var(--muted); font-size: .72rem; margin-top: 4px; }
+.audit-issue-critical { border-color: rgba(248, 113, 113, .46); background: rgba(127, 29, 29, .18); }
+.audit-issue-warning { border-color: rgba(250, 204, 21, .4); background: rgba(113, 63, 18, .16); }
+.audit-issue-info { border-color: rgba(56, 189, 248, .22); }
+.audit-critical-banner { width: 100%; border: 1px solid rgba(248, 113, 113, .55); background: rgba(127, 29, 29, .24); color: #fecaca; border-radius: 14px; padding: 10px 12px; font-size: .88rem; font-weight: 850; }
+.audit-section-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 12px 0; }
+.audit-section { border: 1px solid rgba(148, 163, 184, .14); border-radius: 12px; padding: 10px; background: rgba(2, 6, 23, .2); }
+.audit-section h4 { margin: 0 0 6px; font-size: .82rem; }
+.audit-section p, .audit-section small, .audit-debug-meta { color: var(--muted); font-size: .76rem; }
+.audit-debug-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }

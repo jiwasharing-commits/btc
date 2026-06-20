@@ -101,6 +101,19 @@
   function clearAllOverlays() { clearWhere(() => true); }
   function hasOverlay(key) { return getOverlayRegistry().overlays.has(key); }
   function snapshotOverlayRegistry() { return [...getOverlayRegistry().overlays.values()].map((overlay) => ({ ...overlay, chartObject: Boolean(overlay.chartObject), domElement: Boolean(overlay.domElement) })); }
+  function getOverlaySnapshot() { return snapshotOverlayRegistry(); }
+  function getOverlaysByLayer(layer) { return snapshotOverlayRegistry().filter((overlay) => overlay.layer === layer); }
+  function getOverlaysByTimeframe(timeframe) { return snapshotOverlayRegistry().filter((overlay) => overlay.timeframe === timeframe); }
+  function getDuplicateOverlayKeys() {
+    const counts = {};
+    snapshotOverlayRegistry().forEach((overlay) => { counts[overlay.key] = (counts[overlay.key] || 0) + 1; });
+    return Object.entries(counts).filter(([, count]) => count > 1).map(([key, count]) => ({ key, count }));
+  }
+  function getLayerOffResidue(layerState = {}) {
+    const disabled = Object.entries(layerState).filter(([, enabled]) => !enabled).map(([layer]) => layer);
+    return snapshotOverlayRegistry().filter((overlay) => disabled.includes(overlay.layer));
+  }
+
   function getOverlayStats() {
     const overlays = snapshotOverlayRegistry();
     return overlays.reduce((stats, overlay) => {
@@ -111,5 +124,5 @@
     }, { total: 0, byLayer: {}, byTimeframe: {}, warnings: getOverlayRegistry().warnings.slice() });
   }
 
-  window.BtcDash.chart.overlayRegistry = { createOverlayRegistry, getOverlayRegistry, registerOverlay, removeOverlay, clearLayer, clearTimeframe, clearWorkspace, clearAllOverlays, hasOverlay, buildOverlayKey, getOverlayStats, snapshotOverlayRegistry };
+  window.BtcDash.chart.overlayRegistry = { createOverlayRegistry, getOverlayRegistry, registerOverlay, removeOverlay, clearLayer, clearTimeframe, clearWorkspace, clearAllOverlays, hasOverlay, buildOverlayKey, getOverlayStats, snapshotOverlayRegistry, getOverlaySnapshot, getOverlaysByLayer, getOverlaysByTimeframe, getDuplicateOverlayKeys, getLayerOffResidue };
 })();

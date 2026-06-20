@@ -190,6 +190,14 @@
     run: () => ({ status: "success", message: "Market zones enrichment preserved from existing contexts" })
   });
   registerPipelineStep({
+    name: "Audit Quality",
+    available: () => typeof window.BtcDash.engines?.auditQuality?.runAuditQuality === "function",
+    run: () => {
+      const context = window.BtcDash.engines.auditQuality.runAuditQuality({ reason: "pipeline", triggeredByPipeline: true });
+      return { status: context?.status === "Critical" ? "warning" : "success", message: `Audit Quality: ${context?.status || "Not Run"}` };
+    }
+  });
+  registerPipelineStep({
     name: "UI Render",
     available: (context) => !context.render || typeof window.BtcDash.ui?.renderDashboardUi === "function" || typeof window.BtcDash.ui?.renderAll === "function" || typeof window.renderAll === "function",
     run: (context) => {

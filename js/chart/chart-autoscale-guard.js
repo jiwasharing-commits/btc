@@ -14,13 +14,22 @@
     return Number(last?.close) || null;
   }
   function overlayMidpoint(overlay) { return Number(overlay.price ?? ((Number(overlay.zoneLow) + Number(overlay.zoneHigh)) / 2)); }
-  function isOverlayFarFromPrice(overlay, timeframe) {
+  function getOverlayDistancePct(overlay, timeframe) {
     const price = getCurrentClosedPrice(timeframe);
     const midpoint = overlayMidpoint(overlay);
-    if (!price || !Number.isFinite(midpoint)) return false;
-    const distancePct = Math.abs(midpoint - price) / price * 100;
+    if (!price || !Number.isFinite(midpoint)) return null;
+    return Math.abs(midpoint - price) / price * 100;
+  }
+  function isOverlayFarFromPrice(overlay, timeframe) {
+    const distancePct = getOverlayDistancePct(overlay, timeframe);
     const max = window.BtcDash.config?.OVERLAY_RENDER_CONFIG?.maxDistancePctFromVisiblePrice?.[timeframe] ?? 20;
-    return distancePct > max;
+    return Number.isFinite(distancePct) && distancePct > max;
+  }
+  function isFarOverlay(overlay, timeframe) { return isOverlayFarFromPrice(overlay, timeframe); }
+  function getAutoscaleRiskForOverlay(overlay, timeframe) {
+    const distancePct = getOverlayDistancePct(overlay, timeframe);
+    const isFar = isOverlayFarFromPrice(overlay, timeframe);
+    return { overlay, timeframe, distancePct, isFar, policy: overlay?.drawPolicy || "show" };
   }
   function resolveOverlayDrawPolicy(overlay, timeframe) {
     if (overlay?.drawPolicy === "hide") return "hide";
@@ -31,5 +40,5 @@
     return overlays.map((overlay) => ({ ...overlay, drawPolicy: resolveOverlayDrawPolicy(overlay, timeframe) })).filter((overlay) => overlay.drawPolicy === "show");
   }
 
-  window.BtcDash.chart.autoscaleGuard = { getVisiblePriceRange, getCurrentClosedPrice, isOverlayFarFromPrice, resolveOverlayDrawPolicy, filterAutoscaleSafeOverlays };
+  window.BtcDash.chart.autoscaleGuard = { getVisiblePriceRange, getCurrentClosedPrice, getOverlayDistancePct, isOverlayFarFromPrice, isFarOverlay, getAutoscaleRiskForOverlay, resolveOverlayDrawPolicy, filterAutoscaleSafeOverlays };
 })();

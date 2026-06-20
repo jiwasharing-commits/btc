@@ -53,7 +53,7 @@
     unavailableText: "Not available yet.",
     planningOnlyText: "Planning context only.",
     referenceOnlyText: "Reference only.",
-    bottomTabs: ["indicator", "pattern-summary", "scenario-plan", "structure", "fvg", "sr", "channel", "confluence", "reaction-study", "table"]
+    bottomTabs: ["indicator", "pattern-summary", "scenario-plan", "structure", "fvg", "sr", "channel", "confluence", "reaction-study", "audit", "table"]
   };
 
   Object.assign(window.BtcDash.config, {

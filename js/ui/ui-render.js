@@ -351,9 +351,25 @@ function renderDetail() {
     'Channel': renderChannelTab(),
     'Confluence': renderConfluenceTab(),
     'Reaction Study': renderReactionStudyTab(),
+    'Audit': window.BtcDash.ui.panels?.audit?.renderPanel?.() || '<div class="panel-empty-state">Audit not available.</div>',
     'Table': renderTable()
   };
   el.innerHTML = data[activeDetail];
+}
+
+function renderAuditCriticalBanner() {
+  const existing = qs('#audit-critical-banner');
+  const audit = window.BtcDash.state?.auditQualityContext;
+  if (!audit?.criticalIssues?.length) { if (existing) existing.remove(); return; }
+  const html = window.BtcDash.config?.AUDIT_QUALITY_CONFIG?.wording?.criticalBanner || "Analysis quality warning — review debug audit before relying on context.";
+  if (existing) { existing.textContent = html; return; }
+  const target = qs('.summary-grid') || qs('.workspace-tabs');
+  if (!target?.parentNode) return;
+  const banner = document.createElement('div');
+  banner.id = 'audit-critical-banner';
+  banner.className = 'audit-critical-banner';
+  banner.textContent = html;
+  target.parentNode.insertBefore(banner, target);
 }
 
 function renderAll() {
@@ -362,6 +378,7 @@ function renderAll() {
   renderLayerControls();
   renderDataStatus();
   renderBinanceDebug();
+  renderAuditCriticalBanner();
   renderSummary();
   renderWorkspace();
   renderDetail();
@@ -406,6 +423,7 @@ window.BtcDash.ui = {
   renderConfluenceTab,
   renderScenarioPlanTab,
   renderReactionStudyTab,
+  renderAuditCriticalBanner,
   renderDashboardUi,
   renderHeader,
   renderGlobalSummary,
