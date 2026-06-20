@@ -3,6 +3,9 @@
   window.BtcDash.engines = window.BtcDash.engines || {};
 
   const DEFAULT_TIMEFRAMES = ["1W", "1D", "4H", "1H"];
+  const STRUCTURE_ROLE_BY_TIMEFRAME = { "1W": "macro", "1D": "context", "4H": "setup", "1H": "timing" };
+  const SETUP_SWING_RULES_4H = { minLegBars: 8, minLegMovePct: 1.8, minAtrMove: 1.4, preferRecent: true, maxSetupSwings: 14 };
+  const TIMING_SWING_RULES_1H = { minLegBars: 6, minLegMovePct: 0.8, minAtrMove: 1.1, preferRecent: true, maxTimingSwings: 16 };
 
   function getConfig(timeframe) {
     const root = window.BtcDash.config?.STRUCTURE_V2_CONFIG || {};
@@ -10,11 +13,27 @@
   }
 
   function getRole(timeframe) {
-    return getConfig(timeframe).tf.role || (timeframe === "1W" ? "macro" : timeframe === "1D" ? "context" : timeframe === "4H" ? "setup" : "timing");
+    return getConfig(timeframe).tf.role || STRUCTURE_ROLE_BY_TIMEFRAME[timeframe] || "timing";
   }
 
   function getCandleTime(candle) {
     return candle?.time ?? candle?.openTime ?? candle?.open_time ?? candle?.t ?? null;
+  }
+
+  function toTimeMs(value) {
+    if (value == null) return null;
+    if (typeof value === "number") return value > 10000000000 ? Math.floor(value) : Math.floor(value * 1000);
+    if (/^\d+$/.test(String(value))) {
+      const number = Number(value);
+      return number > 10000000000 ? Math.floor(number) : Math.floor(number * 1000);
+    }
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function toIsoTime(value) {
+    const timeMs = toTimeMs(value);
+    return Number.isFinite(timeMs) ? new Date(timeMs).toISOString() : String(value || "");
   }
 
   function toNumber(value) {
@@ -43,16 +62,26 @@
       timeframe,
       role,
       rawPivots: [],
+      candidateSwings: [],
+      zigzagSwings: [],
+      validLegSwings: [],
       internalSwings: [],
       majorSwings: [],
+      setupSwings: [],
+      timingSwings: [],
       structuralSwings: [],
       analysisSwings: [],
       displaySwings: [],
+      analysisSource: null,
+      displaySource: null,
+      classificationWarnings: [],
       analysisLabels: [],
       displayLabels: [],
       labels: [],
       protectedHigh: null,
       protectedLow: null,
+      timingProtectedHigh: null,
+      timingProtectedLow: null,
       lastSwingHigh: null,
       lastSwingLow: null,
       trendState: "Unknown",
@@ -146,18 +175,31 @@
     const move = previous ? Math.abs(pivot.price - previous.price) : 0;
     const pct = previous?.price ? (move / previous.price) * 100 : 0;
     const atr = pivot.atr ? move / pivot.atr : null;
+    const timeMs = toTimeMs(pivot.time);
+    const qualityScore = Number(Math.min(10, Math.max(1, (pct || 1) + (atr || 0))).toFixed(2));
     return {
       id: `${timeframe}-${layerName}-${pivot.type}-${pivot.index}`,
       timeframe,
       type: pivot.type,
       price: pivot.price,
-      time: pivot.time,
+      time: toIsoTime(pivot.time),
+      timeMs,
+      barIndex: pivot.index,
       index: pivot.index,
       label: pivot.type === "high" ? "H" : "L",
+      hierarchy: layerName,
+      sourceLayer: layerName,
       layer: layerName,
       structureType: layerName,
       isStructural: true,
+      isDisplayEligible: layerName !== "rawPivot",
       isConfirmed: true,
+      comparedTo: null,
+      classificationReason: "Awaiting same-type structural reference.",
+      classificationScope: getRole(timeframe),
+      isConfirmedStructure: false,
+      role: getRole(timeframe),
+      breakStatus: "unbroken",
       sourcePivotId: pivot.id,
       pivotIndex: pivot.pivotIndex,
       pivotTime: pivot.pivotTime,
@@ -172,7 +214,8 @@
       isProtectedHigh: false,
       isProtectedLow: false,
       breakState: { isBroken: false, brokenAtIndex: null, brokenAtTime: null, brokenByClose: false, wickOnly: false, weakBreak: false, confirmation: "None", note: "Unbroken structural reference." },
-      score: Number(Math.min(10, Math.max(1, (pct || 1) + (atr || 0))).toFixed(2)),
+      qualityScore,
+      score: qualityScore,
       scoreLabel: "Reference",
       reasons: [reason],
       note: "Planning context only."
@@ -221,29 +264,127 @@
   }
 
   function labelStructuralSwings(swings, timeframe, layerName) {
+    return classifyStructureSwingsV2(swings, null, timeframe, getRole(timeframe), { hierarchy: layerName });
+  }
+
+  function cloneSwingForHierarchy(swing, hierarchy, reason) {
+    return {
+      ...swing,
+      id: swing.id.replace(/-(internal|major|setup|timing)-/, `-${hierarchy}-`),
+      hierarchy,
+      sourceLayer: swing.sourceLayer || swing.layer || swing.hierarchy,
+      layer: hierarchy,
+      structureType: hierarchy,
+      role: hierarchy === "setup" ? "setup" : hierarchy === "timing" ? "timing" : swing.role,
+      isStructural: true,
+      isDisplayEligible: true,
+      classificationScope: hierarchy === "setup" ? "setup" : hierarchy === "timing" ? "timing" : swing.classificationScope,
+      reasons: [...(swing.reasons || []), reason].filter(Boolean)
+    };
+  }
+
+  function buildHierarchySwings(sourceSwings, timeframe, hierarchy, rules) {
+    const accepted = [];
+    const max = rules.maxSetupSwings || rules.maxTimingSwings || sourceSwings.length;
+    sourceSwings.forEach((swing) => {
+      const last = accepted[accepted.length - 1];
+      if (!last) { accepted.push(cloneSwingForHierarchy(swing, hierarchy, `First ${hierarchy} swing selected from ${swing.hierarchy || swing.layer}.`)); return; }
+      if (last.type === swing.type) {
+        const moreExtreme = swing.type === "high" ? swing.price > last.price : swing.price < last.price;
+        if (moreExtreme) accepted[accepted.length - 1] = cloneSwingForHierarchy(swing, hierarchy, `${hierarchy} ZigZag replacement kept the more extreme ${swing.type}.`);
+        return;
+      }
+      const bars = Math.abs(Number(swing.index ?? swing.barIndex ?? 0) - Number(last.index ?? last.barIndex ?? 0));
+      const movePct = last.price ? Math.abs(swing.price - last.price) / last.price * 100 : 0;
+      const atrMove = swing.moveFromPreviousAtr || (swing.atr ? Math.abs(swing.price - last.price) / swing.atr : null);
+      const atrOk = atrMove == null || atrMove >= (rules.minAtrMove || 0);
+      if (bars >= (rules.minLegBars || 0) && movePct >= (rules.minLegMovePct || 0) && atrOk) accepted.push(cloneSwingForHierarchy(swing, hierarchy, `${hierarchy} swing accepted: ${movePct.toFixed(2)}% over ${bars} bars.`));
+    });
+    return accepted.slice(-max);
+  }
+
+  function buildSetupSwings(majorSwings, validLegSwings, timeframe) {
+    if (timeframe !== "4H") return [];
+    const source = (majorSwings?.length ? majorSwings : validLegSwings || []).filter(Boolean);
+    return classifyStructureSwingsV2(buildHierarchySwings(source, timeframe, "setup", SETUP_SWING_RULES_4H), null, timeframe, "setup", { hierarchy: "setup" });
+  }
+
+  function buildTimingSwings(internalSwings, timeframe) {
+    if (timeframe !== "1H") return [];
+    return classifyStructureSwingsV2(buildHierarchySwings(internalSwings || [], timeframe, "timing", TIMING_SWING_RULES_1H), null, timeframe, "timing", { hierarchy: "timing" });
+  }
+
+  function classifyStructureSwingsV2(primarySwings, protectedContext, timeframe, role, config = {}) {
     const { tf } = getConfig(timeframe);
     const tolerance = (tf.eqTolerancePct || 0.5) / 100;
+    const hierarchy = config.hierarchy || (role === "setup" ? "setup" : role === "timing" ? "timing" : "major");
     let previousHigh = null;
     let previousLow = null;
-    return swings.map((swing) => {
-      const next = { ...swing, layer: layerName, structureType: layerName };
-      if (next.type === "high") {
-        if (!previousHigh) next.label = "H";
-        else if (next.price > previousHigh.price * (1 + tolerance)) next.label = "HH";
-        else if (next.price < previousHigh.price * (1 - tolerance)) next.label = "LH";
-        else next.label = "H";
-        next.previousSameTypeSwingId = previousHigh?.id || null;
+    return (primarySwings || []).map((swing) => {
+      const next = { ...swing, hierarchy: swing.hierarchy || hierarchy, sourceLayer: swing.sourceLayer || swing.layer || hierarchy, layer: swing.layer || hierarchy, structureType: swing.structureType || hierarchy, role, classificationScope: role, isDisplayEligible: true };
+      const ref = next.type === "high" ? previousHigh : previousLow;
+      if (!ref) {
+        next.label = next.type === "high" ? "H" : "L";
+        next.comparedTo = null;
+        next.classificationReason = `First ${role} ${next.type}; no prior ${next.type} reference yet.`;
+        next.isConfirmedStructure = false;
+      } else if (next.type === "high") {
+        const broke = next.price > ref.price * (1 + tolerance);
+        next.label = broke ? "HH" : "LH";
+        next.comparedTo = ref.id;
+        const pct = ref.price ? ((next.price - ref.price) / ref.price) * 100 : 0;
+        next.classificationReason = broke ? `High broke prior ${role} high ${ref.id} by ${pct.toFixed(2)}%.` : `High failed to break prior ${role} high ${ref.id}; classified as LH.`;
+        next.isConfirmedStructure = true;
         previousHigh = next;
+        return next;
       } else {
-        if (!previousLow) next.label = "L";
-        else if (next.price > previousLow.price * (1 + tolerance)) next.label = "HL";
-        else if (next.price < previousLow.price * (1 - tolerance)) next.label = "LL";
-        else next.label = "L";
-        next.previousSameTypeSwingId = previousLow?.id || null;
+        const broke = next.price < ref.price * (1 - tolerance);
+        next.label = broke ? "LL" : "HL";
+        next.comparedTo = ref.id;
+        const pct = ref.price ? ((ref.price - next.price) / ref.price) * 100 : 0;
+        next.classificationReason = broke ? `Low broke prior ${role} low ${ref.id} by ${pct.toFixed(2)}%.` : `Low held above prior ${role} low ${ref.id}; classified as HL.`;
+        next.isConfirmedStructure = true;
         previousLow = next;
+        return next;
       }
+      if (next.type === "high") previousHigh = next;
+      else previousLow = next;
       return next;
     });
+  }
+
+  function makeProtectedLevel(swing, timeframe, role, type, options = {}) {
+    if (!swing) return null;
+    return {
+      id: `${timeframe}-${options.isTimingOnly ? "timing-" : ""}protected-${type}-${swing.id}`,
+      timeframe,
+      type,
+      price: swing.price,
+      time: swing.time,
+      timeMs: swing.timeMs ?? toTimeMs(swing.time),
+      barIndex: swing.barIndex ?? swing.index,
+      index: swing.index,
+      sourceSwingId: swing.id,
+      sourceHierarchy: swing.hierarchy || swing.layer || swing.structureType,
+      role,
+      isTimingOnly: Boolean(options.isTimingOnly),
+      canOverrideHtf: options.canOverrideHtf !== false && role !== "timing",
+      weakProtectedFallback: Boolean(options.weakProtectedFallback),
+      reason: options.reason || `Protected ${type} resolved from ${swing.hierarchy || swing.layer} ${role} swing.`,
+      isProtectedHigh: type === "high",
+      isProtectedLow: type === "low"
+    };
+  }
+
+  function resolveProtectedLevelsV2(primarySwings, timeframe, role, candles, config = {}) {
+    const highs = (primarySwings || []).filter((swing) => swing.type === "high");
+    const lows = (primarySwings || []).filter((swing) => swing.type === "low");
+    const high = highs.at(-1) || null;
+    const low = lows.at(-1) || null;
+    const isTimingOnly = role === "timing";
+    const protectedHigh = makeProtectedLevel(high, timeframe, role, "high", { isTimingOnly, canOverrideHtf: !isTimingOnly, reason: isTimingOnly ? "Timing-only high reference; cannot override HTF." : `Protected high resolved from ${high?.hierarchy || "primary"} hierarchy.` });
+    const protectedLow = makeProtectedLevel(low, timeframe, role, "low", { isTimingOnly, canOverrideHtf: !isTimingOnly, reason: isTimingOnly ? "Timing-only low reference; cannot override HTF." : `Protected low resolved from ${low?.hierarchy || "primary"} hierarchy.` });
+    return { protectedHigh, protectedLow, timingProtectedHigh: isTimingOnly ? protectedHigh : null, timingProtectedLow: isTimingOnly ? protectedLow : null, lastSwingHigh: protectedHigh, lastSwingLow: protectedLow };
   }
 
   function promotePivotsToStructure(rawPivots, candles, timeframe) {
@@ -262,12 +403,8 @@
     };
   }
 
-  function deriveProtectedLevels(swings) {
-    const highs = swings.filter((swing) => swing.type === "high");
-    const lows = swings.filter((swing) => swing.type === "low");
-    const protectedHigh = highs[highs.length - 1] ? { ...highs[highs.length - 1], isProtectedHigh: true } : null;
-    const protectedLow = lows[lows.length - 1] ? { ...lows[lows.length - 1], isProtectedLow: true } : null;
-    return { protectedHigh, protectedLow, lastSwingHigh: protectedHigh, lastSwingLow: protectedLow };
+  function deriveProtectedLevels(swings, timeframe = "4H") {
+    return resolveProtectedLevelsV2(swings, timeframe, getRole(timeframe), [], {});
   }
 
   function breakEventForLevel(candle, index, levelSwing, direction, timeframe) {
@@ -341,8 +478,9 @@
     const bullish = labels.filter((label) => label === "HH" || label === "HL").length;
     const bearish = labels.filter((label) => label === "LH" || label === "LL").length;
     const role = input.role;
+    const hasConfirmedBreak = input.bosChoch?.type === "BOS" || input.bosChoch?.type === "CHoCH";
     let bias = "Neutral";
-    let trendState = role === "macro" ? "Macro Range" : role === "context" ? "Range" : role === "setup" ? "Mixed Setup" : "Mixed Timing";
+    let trendState = role === "macro" ? "Macro Range" : role === "context" ? "Range" : role === "setup" ? "Range / Compression" : "Mixed Timing";
     if (bullish > bearish) {
       bias = role === "macro" ? "Macro Bullish" : "Bullish";
       trendState = role === "macro" ? "Macro Uptrend" : role === "context" ? "Bullish Context" : role === "setup" ? "Bullish Setup" : "Bullish Timing";
@@ -350,15 +488,26 @@
       bias = role === "macro" ? "Macro Bearish" : "Bearish";
       trendState = role === "macro" ? "Macro Downtrend" : role === "context" ? "Bearish Context" : role === "setup" ? "Bearish Setup" : "Bearish Timing";
     }
+    if (!hasConfirmedBreak && role === "setup") {
+      if (trendState === "Bullish Setup") trendState = "Bullish Setup Leaning";
+      else if (trendState === "Bearish Setup") trendState = "Bearish Setup Leaning";
+      else trendState = input.sweepStatus?.hasSweep ? "Recovery Without BOS" : "Range / Compression";
+    }
+    if (!hasConfirmedBreak && (role === "macro" || role === "context") && /Bullish|Bearish/.test(trendState)) trendState = `${trendState} Leaning`;
     if (input.bosChoch?.type === "Weak Break") trendState = `${trendState} / Needs Confirmation`;
-    if (input.sweepStatus?.hasSweep && role === "timing") trendState = "Sweep Reaction";
+    if (input.sweepStatus?.hasSweep && role === "timing") trendState = "Sweep Reaction Timing";
+    const setupState = role === "setup" ? trendState : role === "timing" ? "Timing only" : "Higher timeframe context";
+    const timingState = role === "timing" ? trendState : "Not timing timeframe";
+    const noBreak = hasConfirmedBreak ? "" : " No close-confirmed structure break detected.";
+    const timingNote = role === "timing" ? " 1H is timing-only and cannot override higher timeframe structure." : "";
     return {
       trendState,
       bias,
       status: trendState,
-      setupState: role === "setup" ? trendState : role === "timing" ? "Timing only" : "Higher timeframe context",
-      timingState: role === "timing" ? trendState : "Not timing timeframe",
-      summary: `${input.timeframe} ${role} structure: ${trendState}. ${input.bosChoch?.note || "Reference only."}`
+      setupState,
+      timingState,
+      canOverrideHtf: role !== "timing",
+      summary: `${input.timeframe} ${role} structure: ${trendState}.${noBreak}${timingNote} ${input.bosChoch?.note || "Reference only."}`
     };
   }
 
@@ -405,30 +554,58 @@
       const rawPivots = detectRawPivots(candles, timeframe);
       const promoted = promotePivotsToStructure(rawPivots, candles, timeframe);
       const role = getRole(timeframe);
-      const primary = (role === "macro" || role === "context") ? (promoted.majorSwings.length ? promoted.majorSwings : promoted.internalSwings) : (promoted.internalSwings.length ? promoted.internalSwings : promoted.majorSwings);
+      const candidateSwings = [...promoted.majorSwings, ...promoted.internalSwings].sort((a, b) => Number(a.index) - Number(b.index));
+      const zigzagSwings = candidateSwings;
+      const validLegSwings = promoted.majorSwings.length ? promoted.majorSwings : promoted.internalSwings;
+      const setupSwings = buildSetupSwings(promoted.majorSwings, validLegSwings, timeframe);
+      const timingSwings = buildTimingSwings(promoted.internalSwings, timeframe);
+      let primary = [];
+      let analysisSource = "majorSwings";
+      if (role === "macro" || role === "context") { primary = promoted.majorSwings; analysisSource = "majorSwings"; }
+      else if (role === "setup") { primary = setupSwings.length ? setupSwings : promoted.majorSwings; analysisSource = setupSwings.length ? "setupSwings" : "majorSwings"; }
+      else { primary = timingSwings.length ? timingSwings : classifyStructureSwingsV2((promoted.internalSwings || []).map((swing) => cloneSwingForHierarchy(swing, "timing", "Timing fallback from filtered internal swing.")), null, timeframe, role, { hierarchy: "timing" }); analysisSource = "timingSwings"; }
       if (!primary.length) {
         const empty = createEmptyStructureContext(timeframe, "Raw pivots found but no valid structural swing passed V2 filters.");
         empty.rawPivots = rawPivots;
+        empty.candidateSwings = candidateSwings;
+        empty.zigzagSwings = zigzagSwings;
+        empty.validLegSwings = validLegSwings;
+        empty.setupSwings = setupSwings;
+        empty.timingSwings = timingSwings;
+        empty.analysisSource = analysisSource;
+        empty.displaySource = analysisSource;
+        empty.classificationWarnings = ["No primary hierarchy swings available."];
         empty.debugStats = promoted.debugStats;
         window.BtcDash.state.structureContexts[timeframe] = empty;
         try { structureContexts[timeframe] = empty; } catch (error) { /* ignore lexical fallback */ }
         return empty;
       }
-      const protectedLevels = deriveProtectedLevels(primary, timeframe);
+      primary = classifyStructureSwingsV2(primary, null, timeframe, role, { hierarchy: role === "setup" ? "setup" : role === "timing" ? "timing" : "major" });
+      const protectedLevels = resolveProtectedLevelsV2(primary, timeframe, role, candles, tf);
       const bosChoch = deriveBosChochState(candles, primary, timeframe, protectedLevels);
       const sweepStatus = deriveSweepStatus(candles, primary, timeframe, protectedLevels);
       const bias = deriveStructureBias({ timeframe, role, analysisSwings: primary, bosChoch, sweepStatus, protectedLevels });
       const displaySwings = buildDisplaySwings(primary, timeframe);
+      const displaySource = analysisSource;
+      const classificationWarnings = primary.filter((swing) => ["HH", "HL", "LH", "LL"].includes(swing.label) && (!swing.comparedTo || !swing.classificationReason)).map((swing) => `${swing.id} missing comparison metadata`);
       const context = {
         available: true,
         timeframe,
         role,
         rawPivots,
+        candidateSwings,
+        zigzagSwings,
+        validLegSwings,
         internalSwings: promoted.internalSwings,
         majorSwings: promoted.majorSwings,
+        setupSwings,
+        timingSwings,
         structuralSwings: promoted.structuralSwings,
         analysisSwings: primary,
         displaySwings,
+        analysisSource,
+        displaySource,
+        classificationWarnings,
         analysisLabels: primary,
         displayLabels: displaySwings,
         labels: displaySwings,
@@ -438,10 +615,11 @@
         status: bias.status,
         setupState: bias.setupState,
         timingState: bias.timingState,
+        canOverrideHtf: bias.canOverrideHtf,
         bosChoch,
         sweepStatus,
         sequence: primary.map((swing) => swing.label).filter(Boolean),
-        debugStats: { ...promoted.debugStats, rawPivotCount: rawPivots.length, internalSwingCount: promoted.internalSwings.length, majorSwingCount: promoted.majorSwings.length, displayedLabelCount: displaySwings.length, analysisSwingCount: primary.length, displaySwingCount: displaySwings.length, hiddenDisplaySwingCount: Math.max(0, primary.length - displaySwings.length), displayFilterReason: "Clean display swings prioritize valid HH/HL/LH/LL, spacing, move size, and recency.", reason: options.reason || null },
+        debugStats: { ...promoted.debugStats, rawPivotCount: rawPivots.length, internalSwingCount: promoted.internalSwings.length, majorSwingCount: promoted.majorSwings.length, displayedLabelCount: displaySwings.length, setupSwingCount: setupSwings.length, timingSwingCount: timingSwings.length, analysisSource, displaySource, analysisSwingCount: primary.length, displaySwingCount: displaySwings.length, hiddenDisplaySwingCount: Math.max(0, primary.length - displaySwings.length), displayFilterReason: "Clean display swings prioritize valid HH/HL/LH/LL, spacing, move size, and recency.", reason: options.reason || null },
         summary: bias.summary,
         note: "Planning context only. Raw Pivot is not structure."
       };
@@ -494,6 +672,36 @@
       .sort((a, b) => Number(a.index) - Number(b.index));
   }
 
+
+  function debugStructureClassification(timeframe = "4H") {
+    const ctx = getStructureContext(timeframe);
+    return {
+      timeframe,
+      role: ctx.role,
+      rawPivotCount: ctx.rawPivots?.length || 0,
+      internalCount: ctx.internalSwings?.length || 0,
+      majorCount: ctx.majorSwings?.length || 0,
+      setupCount: ctx.setupSwings?.length || 0,
+      timingCount: ctx.timingSwings?.length || 0,
+      analysisSource: ctx.analysisSource,
+      displaySource: ctx.displaySource,
+      protectedHigh: ctx.protectedHigh,
+      protectedLow: ctx.protectedLow,
+      timingProtectedHigh: ctx.timingProtectedHigh,
+      timingProtectedLow: ctx.timingProtectedLow,
+      bosChoch: ctx.bosChoch,
+      labeledSwings: ctx.analysisSwings || [],
+      warnings: ctx.classificationWarnings || []
+    };
+  }
+
+  function printStructureSwings(timeframe = "4H", key = "analysisSwings") {
+    const rows = getStructureContext(timeframe)?.[key] || [];
+    const table = rows.map((swing) => ({ id: swing.id, type: swing.type, label: swing.label, hierarchy: swing.hierarchy, price: swing.price, time: swing.time, comparedTo: swing.comparedTo, reason: swing.classificationReason }));
+    if (console?.table) console.table(table);
+    return table;
+  }
+
   const api = {
     rebuildStructureContexts,
     rebuildStructureForTimeframe,
@@ -508,6 +716,12 @@
     deriveProtectedLevels,
     deriveStructureBias,
     buildCleanDisplaySwings,
+    buildSetupSwings,
+    buildTimingSwings,
+    resolveProtectedLevelsV2,
+    classifyStructureSwingsV2,
+    debugStructureClassification,
+    printStructureSwings,
     getStructureContext,
     getStructuralSourceSwings,
     rebuildAllStructureContexts: rebuildStructureContexts,
@@ -523,4 +737,6 @@
   window.rebuildAllStructureContexts = rebuildStructureContexts;
   window.rebuildStructureForTimeframe = rebuildStructureForTimeframe;
   window.buildMarketStructureContext = rebuildStructureForTimeframe;
+  window.BtcDash.debugStructureClassification = debugStructureClassification;
+  window.BtcDash.printStructureSwings = printStructureSwings;
 })();

@@ -189,6 +189,36 @@
     return { status: issues.length ? "Warning" : "OK", issues };
   }
 
+
+  function auditStructureHierarchy() {
+    const issues = [];
+    const contexts = state().structureContexts || {};
+    const fourH = contexts["4H"];
+    const oneH = contexts["1H"];
+    function warn(timeframe, message, path, value, expected) {
+      issues.push(createAuditIssue({ severity: "warning", category: "context", timeframe, engine: "Structure", message, path, value, expected }));
+    }
+    if (fourH?.available) {
+      if (/internal/i.test(String(fourH.protectedHigh?.id || fourH.protectedHigh?.sourceHierarchy || ""))) warn("4H", "Structure hierarchy warning: 4H protectedHigh uses internal swing. Expected setup/major swing.", "state.structureContexts.4H.protectedHigh", fourH.protectedHigh?.sourceHierarchy, "setup or major");
+      if (/internal/i.test(String(fourH.protectedLow?.id || fourH.protectedLow?.sourceHierarchy || ""))) warn("4H", "Structure hierarchy warning: 4H protectedLow uses internal swing. Expected setup/major swing.", "state.structureContexts.4H.protectedLow", fourH.protectedLow?.sourceHierarchy, "setup or major");
+      if (fourH.analysisSwings === fourH.internalSwings) warn("4H", "Structure hierarchy warning: 4H analysisSwings references internalSwings directly.", "state.structureContexts.4H.analysisSwings", fourH.analysisSource, "setupSwings or majorSwings");
+      if ((fourH.displaySwings || []).length && (fourH.displaySwings || []).every((swing) => /internal/i.test(String(swing.hierarchy || swing.layer || swing.id)))) warn("4H", "Structure hierarchy warning: 4H displaySwings all come from internal hierarchy.", "state.structureContexts.4H.displaySwings", fourH.displaySource, "setupSwings or majorSwings");
+      if (fourH.bosChoch?.status === "None" && /^(Bullish|Bearish) Setup$/.test(String(fourH.status))) warn("4H", "Structure status warning: final 4H bullish/bearish setup shown without close-confirmed BOS/CHoCH.", "state.structureContexts.4H.status", fourH.status, "Leaning/Range/Recovery wording");
+    }
+    if (oneH?.available) {
+      if (oneH.protectedHigh && oneH.protectedHigh.isTimingOnly !== true) warn("1H", "Structure hierarchy warning: 1H protectedHigh must be timing-only.", "state.structureContexts.1H.protectedHigh", oneH.protectedHigh?.isTimingOnly, true);
+      if (oneH.protectedLow && oneH.protectedLow.isTimingOnly !== true) warn("1H", "Structure hierarchy warning: 1H protectedLow must be timing-only.", "state.structureContexts.1H.protectedLow", oneH.protectedLow?.isTimingOnly, true);
+    }
+    Object.entries(contexts).forEach(([timeframe, ctx]) => {
+      (ctx?.analysisSwings || []).forEach((swing, index) => {
+        if (!["HH", "HL", "LH", "LL"].includes(swing?.label)) return;
+        if (!swing.comparedTo) warn(timeframe, "Structure classification warning: labeled swing missing comparedTo.", `state.structureContexts.${timeframe}.analysisSwings[${index}].comparedTo`, swing.id, "reference swing id");
+        if (!swing.classificationReason) warn(timeframe, "Structure classification warning: labeled swing missing classificationReason.", `state.structureContexts.${timeframe}.analysisSwings[${index}].classificationReason`, swing.id, "reason text");
+      });
+    });
+    return { status: issues.length ? "Warning" : "OK", issues };
+  }
+
   function auditPerformanceLimits() {
     const issues = [];
     const limits = cfg().performanceRules || {};
@@ -227,14 +257,15 @@
       const autoscaleAudit = isPipelineLight ? { issues: [] } : auditAutoscaleRisk();
       const marketZoneAudit = isPipelineLight ? { issues: [] } : auditMarketZoneQuality();
       const mtfAudit = isPipelineLight ? { issues: [] } : auditMtfGuard();
+      const structureHierarchyAudit = auditStructureHierarchy();
       const performanceAudit = auditPerformanceLimits();
-      let issues = limitIssues([dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, performanceAudit].flatMap((x) => x.issues || []));
+      let issues = limitIssues([dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, structureHierarchyAudit, performanceAudit].flatMap((x) => x.issues || []));
       if (isPipelineLight) issues = issues.slice(0, perfAudit.maxIssuesInNormalRun || 80);
       const criticalIssues = issues.filter((issue) => issue.severity === "critical");
       const warningIssues = issues.filter((issue) => issue.severity === "warning");
       const infoIssues = issues.filter((issue) => issue.severity === "info");
       const status = criticalIssues.length ? "Critical" : warningIssues.length ? "Warning" : "OK";
-      const context = { available: true, status, severity: criticalIssues.length ? "critical" : warningIssues.length ? "warning" : "info", lastRunAt: nowIso(), lastRunReason: options.reason || "manual", summary: { criticalCount: criticalIssues.length, warningCount: warningIssues.length, infoCount: infoIssues.length, totalIssues: issues.length }, dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, performanceAudit, issues, criticalIssues, warningIssues, infoIssues, debugStats: { triggeredByPipeline: Boolean(options.triggeredByPipeline), includeDeepScan: Boolean(options.includeDeepScan), mode: isPipelineLight ? "light" : (options.mode || "deep"), durationMs: Number((performance.now() - started).toFixed(1)), issueLimit: isPipelineLight ? (perfAudit.maxIssuesInNormalRun || 80) : (config.safeScanRules?.maxTotalIssues || 300) }, message: status === "OK" ? "Audit OK. Planning context only." : config.wording?.criticalBanner || "Review debug audit before relying on context." };
+      const context = { available: true, status, severity: criticalIssues.length ? "critical" : warningIssues.length ? "warning" : "info", lastRunAt: nowIso(), lastRunReason: options.reason || "manual", summary: { criticalCount: criticalIssues.length, warningCount: warningIssues.length, infoCount: infoIssues.length, totalIssues: issues.length }, dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, structureHierarchyAudit, performanceAudit, issues, criticalIssues, warningIssues, infoIssues, debugStats: { triggeredByPipeline: Boolean(options.triggeredByPipeline), includeDeepScan: Boolean(options.includeDeepScan), mode: isPipelineLight ? "light" : (options.mode || "deep"), durationMs: Number((performance.now() - started).toFixed(1)), issueLimit: isPipelineLight ? (perfAudit.maxIssuesInNormalRun || 80) : (config.safeScanRules?.maxTotalIssues || 300) }, message: status === "OK" ? "Audit OK. Planning context only." : config.wording?.criticalBanner || "Review debug audit before relying on context." };
       state().auditQualityContext = context;
       return context;
     } catch (error) {
@@ -247,7 +278,7 @@
 
   function getAuditQualityContext() { return state().auditQualityContext || createEmptyAuditQualityContext(); }
 
-  window.BtcDash.engines.auditQuality = { runAuditQuality, createEmptyAuditQualityContext, createAuditIssue, auditMarketDataIntegrity, auditRunningCandleLeak, auditContextShapes, auditScoreSanity, auditRebuildPipeline, auditOverlayRegistry, auditAutoscaleRisk, auditMarketZoneQuality, auditMtfGuard, auditPerformanceLimits, getAuditQualityContext };
+  window.BtcDash.engines.auditQuality = { runAuditQuality, createEmptyAuditQualityContext, createAuditIssue, auditMarketDataIntegrity, auditRunningCandleLeak, auditContextShapes, auditScoreSanity, auditRebuildPipeline, auditOverlayRegistry, auditAutoscaleRisk, auditMarketZoneQuality, auditMtfGuard, auditStructureHierarchy, auditPerformanceLimits, getAuditQualityContext };
   window.BtcDash.auditQuality = window.BtcDash.engines.auditQuality;
   window.runAuditQuality = runAuditQuality;
 })();

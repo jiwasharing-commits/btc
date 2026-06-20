@@ -44,6 +44,9 @@
   const STRUCTURE_V2_CONFIG = {
     enabled: true,
     timeframes: ["1W", "1D", "4H", "1H"],
+    roleByTimeframe: { "1W": "macro", "1D": "context", "4H": "setup", "1H": "timing" },
+    setupSwingRules4H: { minLegBars: 8, minLegMovePct: 1.8, minAtrMove: 1.4, preferRecent: true, maxSetupSwings: 14 },
+    timingSwingRules1H: { minLegBars: 6, minLegMovePct: 0.8, minAtrMove: 1.1, preferRecent: true, maxTimingSwings: 16 },
     "1W": { role: "macro", pivotLeft: 4, pivotRight: 4, minMovePct: 8.0, atrLength: 14, atrMultiplier: 1.8, minBarGap: 5, eqTolerancePct: 1.5, breakBufferPct: 0.40, weakBreakBufferPct: 0.15, maxRawPivots: 80, maxInternalSwings: 16, maxMajorSwings: 8, displayMaxLabels: 6, protectedLevelLookback: 8, layerRules: { internal: { minMoveScale: 0.75, minBarGapScale: 0.75, maxSwings: 16 }, major: { minMoveScale: 1.00, minBarGapScale: 1.00, maxSwings: 8 } }, label: "Weekly Macro Structure" },
     "1D": { role: "context", pivotLeft: 4, pivotRight: 4, minMovePct: 4.0, atrLength: 14, atrMultiplier: 1.6, minBarGap: 6, eqTolerancePct: 0.9, breakBufferPct: 0.25, weakBreakBufferPct: 0.12, maxRawPivots: 120, maxInternalSwings: 24, maxMajorSwings: 12, displayMaxLabels: 12, protectedLevelLookback: 12, layerRules: { internal: { minMoveScale: 0.70, minBarGapScale: 0.75, maxSwings: 24 }, major: { minMoveScale: 1.00, minBarGapScale: 1.00, maxSwings: 12 } }, label: "Daily Context Structure" },
     "4H": { role: "setup", pivotLeft: 4, pivotRight: 4, minMovePct: 3.0, atrLength: 14, atrMultiplier: 1.7, minBarGap: 14, eqTolerancePct: 0.5, breakBufferPct: 0.15, weakBreakBufferPct: 0.08, maxRawPivots: 160, maxInternalSwings: 28, maxMajorSwings: 14, displayMaxLabels: 11, protectedLevelLookback: 16, layerRules: { internal: { minMoveScale: 0.80, minBarGapScale: 0.85, maxSwings: 28 }, major: { minMoveScale: 1.25, minBarGapScale: 1.20, maxSwings: 14 } }, label: "4H Setup Structure" },
@@ -129,7 +132,7 @@
     scoreRules: { minScore: 0, maxScore: 10, scoreKeys: ["score", "reactionScore", "confluenceScore", "scenarioScore", "riskScore", "qualityScore", "planningScore", "confidenceScore", "strengthScore"] },
     contextRules: {
       requiredByContext: {
-        structureContexts: ["available", "timeframe", "rawPivots", "internalSwings", "majorSwings", "analysisSwings", "displaySwings", "labels", "trendState", "bias", "bosChoch", "summary"],
+        structureContexts: ["available", "timeframe", "rawPivots", "candidateSwings", "zigzagSwings", "validLegSwings", "internalSwings", "majorSwings", "setupSwings", "timingSwings", "analysisSwings", "displaySwings", "analysisSource", "displaySource", "labels", "trendState", "bias", "bosChoch", "summary"],
         liquidityContexts: ["available", "timeframe", "rawEqualHighs", "rawEqualLows", "buySidePools", "sellSidePools", "activeBuySidePools", "activeSellSidePools", "visiblePools", "marketZoneRows", "summary", "status"],
         srContexts: ["available", "timeframe", "rawLevels", "zoneClusters", "zones", "activeSupports", "activeResistances", "nearestSupport", "nearestResistance", "visibleZones", "marketZoneRows", "summary", "status"],
         fvgContexts: ["available", "timeframe", "rawFvgs", "validFvgs", "activeBullish", "activeBearish", "visibleFvgs", "marketZoneRows", "summary", "status"],
