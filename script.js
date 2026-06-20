@@ -52,7 +52,9 @@
       const button = event.target.closest('[data-layer]');
       if (!button) return;
       const layer = button.dataset.layer;
-      activeLayers[layer] = !activeLayers[layer];
+      const enabled = !activeLayers[layer];
+      window.BtcDash.chart?.setLayerState?.(layer, enabled);
+      activeLayers[layer] = enabled;
       button.classList.toggle('active', activeLayers[layer]);
       renderWorkspace();
     });

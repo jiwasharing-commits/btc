@@ -29,7 +29,7 @@ function chart(title, timeframe, closedCandles, strip = []) {
 }
 
 function clearTradingChart() {
-  clearChartOverlayLayer();
+  clearChartOverlays();
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
@@ -69,7 +69,8 @@ function addDummyPriceLines(closedCandles, running) {
   if (activeLayers.Confluence) {
     const candidate = confluenceContext?.strongestCandidate;
     if (candidate) {
-      candleSeries.createPriceLine({ price: candidate.midpoint, color: "rgba(45, 212, 191, .75)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: "Confluence" });
+      const line = candleSeries.createPriceLine({ price: candidate.midpoint, color: "rgba(45, 212, 191, .75)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: "Confluence" });
+      window.BtcDash.chart?.overlayRegistry?.registerOverlay?.({ layer: "confluence", timeframe, workspace: activeWorkspace, source: "confluence", sourceId: candidate.id || candidate.label, type: "price-line", price: candidate.midpoint, chartObject: { remove: () => candleSeries?.removePriceLine?.(line) } });
     }
   }
 
@@ -81,10 +82,13 @@ function addDummyPriceLines(closedCandles, running) {
 function addScenarioLevelPriceLines() {
   const riskPlan = scenarioContext?.primaryScenario?.riskPlan;
   if (!candleSeries || !riskPlan?.available) return;
-  candleSeries.createPriceLine({ price: riskPlan.watchArea.midpoint, color: "rgba(34, 197, 94, .75)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "Watch Area" });
-  candleSeries.createPriceLine({ price: riskPlan.invalidation.level, color: "rgba(248, 113, 113, .78)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: "Invalidation Ref" });
+  const watchLine = candleSeries.createPriceLine({ price: riskPlan.watchArea.midpoint, color: "rgba(34, 197, 94, .75)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: "Watch Area" });
+  window.BtcDash.chart?.overlayRegistry?.registerOverlay?.({ layer: "scenario", timeframe: getActiveTimeframe(), workspace: activeWorkspace, source: "scenario", sourceId: "watch-area", type: "price-line", price: riskPlan.watchArea.midpoint, chartObject: { remove: () => candleSeries?.removePriceLine?.(watchLine) } });
+  const invalidationLine = candleSeries.createPriceLine({ price: riskPlan.invalidation.level, color: "rgba(248, 113, 113, .78)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: "Invalidation Ref" });
+  window.BtcDash.chart?.overlayRegistry?.registerOverlay?.({ layer: "scenario", timeframe: getActiveTimeframe(), workspace: activeWorkspace, source: "scenario", sourceId: "invalidation", type: "price-line", price: riskPlan.invalidation.level, chartObject: { remove: () => candleSeries?.removePriceLine?.(invalidationLine) } });
   riskPlan.targets.slice(0, 3).forEach((target, index) => {
-    candleSeries.createPriceLine({ price: target.level, color: "rgba(125, 211, 252, .68)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: `TP${index + 1} Ref` });
+    const targetLine = candleSeries.createPriceLine({ price: target.level, color: "rgba(125, 211, 252, .68)", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: `TP${index + 1} Ref` });
+    window.BtcDash.chart?.overlayRegistry?.registerOverlay?.({ layer: "scenario", timeframe: getActiveTimeframe(), workspace: activeWorkspace, source: "scenario", sourceId: target.id || `tp-${index + 1}`, type: "price-line", price: target.level, chartObject: { remove: () => candleSeries?.removePriceLine?.(targetLine) } });
   });
 }
 
@@ -93,13 +97,15 @@ function getChartOverlayLayer() {
 }
 
 function clearChartOverlayLayer(type = null) {
+  if (type) window.BtcDash.chart?.overlayRegistry?.clearLayer?.(type);
+  else window.BtcDash.chart?.overlayRegistry?.clearAllOverlays?.();
   const layer = getChartOverlayLayer();
   if (!layer) return;
   const selector = type ? `[data-overlay-type="${type}"]` : '[data-overlay-type]';
   layer.querySelectorAll(selector).forEach((node) => node.remove());
 }
 
-function addBoundedZoneBox({ type, className, label, lower, upper, startTime, endTime }) {
+function addBoundedZoneBox({ type, className, label, lower, upper, startTime, endTime, overlayKey = null }) {
   const layer = getChartOverlayLayer();
   const container = qs('#main-chart');
   if (!layer || !container || !tradingChart || !candleSeries) return;
@@ -111,7 +117,7 @@ function addBoundedZoneBox({ type, className, label, lower, upper, startTime, en
   const x2 = Number.isFinite(lastVisible) ? lastVisible : fallbackEnd;
   const y1 = candleSeries.priceToCoordinate(upper);
   const y2 = candleSeries.priceToCoordinate(lower);
-  if (![x1, x2, y1, y2].every(Number.isFinite) || x2 <= 0 || x1 >= container.clientWidth || x2 <= x1) return;
+  if (![x1, x2, y1, y2].every(Number.isFinite) || x2 <= 0 || x1 >= container.clientWidth || x2 <= x1) return null;
   const box = document.createElement('div');
   box.dataset.overlayType = type;
   box.className = className;
@@ -121,6 +127,22 @@ function addBoundedZoneBox({ type, className, label, lower, upper, startTime, en
   box.style.height = `${Math.max(8, Math.abs(y2 - y1))}px`;
   box.innerHTML = `<span>${label}</span>`;
   layer.appendChild(box);
+  if (overlayKey) box.dataset.overlayKey = overlayKey;
+  window.BtcDash.chart?.overlayRegistry?.registerOverlay?.({
+    key: overlayKey || `${type}|${getActiveTimeframe()}|${label}|${lower}|${upper}|${startTime}|${endTime}`,
+    layer: type,
+    timeframe: getActiveTimeframe(),
+    workspace: activeWorkspace,
+    source: type,
+    sourceId: label,
+    type,
+    zoneLow: lower,
+    zoneHigh: upper,
+    startTime,
+    endTime,
+    domElement: box
+  });
+  return box;
 }
 
 function buildSrVisualItems(timeframe) {
@@ -232,6 +254,18 @@ function addChannelLine(line, startTime, endTime, color, lineWidth, title) {
   const series = tradingChart.addLineSeries({ color, lineWidth, priceLineVisible: false, lastValueVisible: false, title });
   series.setData([start, end]);
   channelSeries.push(series);
+  window.BtcDash.chart?.overlayRegistry?.registerOverlay?.({
+    layer: "channel",
+    timeframe: getActiveTimeframe(),
+    workspace: activeWorkspace,
+    source: "channel",
+    sourceId: title,
+    type: "line",
+    price: start.value,
+    startTime,
+    endTime,
+    chartObject: { remove: () => tradingChart?.removeSeries?.(series) }
+  });
 }
 
 function addChannelOverlays(candles, timeframe) {
@@ -313,8 +347,80 @@ function renderTradingChart() {
   resizeObserver.observe(container);
 }
 
+function initChart() {
+  renderTradingChart();
+  return { chart: tradingChart, candleSeries };
+}
+
+function renderChart(timeframe = getActiveTimeframe(), options = {}) {
+  clearChartOverlays();
+  renderTradingChart();
+  const state = window.BtcDash.state;
+  if (state?.chartRuntime) {
+    state.chartRuntime.activeWorkspace = activeWorkspace;
+    state.chartRuntime.activeTimeframe = timeframe;
+    state.chartRuntime.activeRange = rangeState[activeWorkspace] || null;
+    state.chartRuntime.lastRenderAt = new Date().toISOString();
+    state.chartRuntime.renderCount += 1;
+  }
+  return { timeframe, overlays: window.BtcDash.chart?.overlayRegistry?.getOverlayStats?.() || null, options };
+}
+
+function rerenderActiveChart(reason = "manual") {
+  return renderChart(getActiveTimeframe(), { reason });
+}
+
+function clearChartOverlays() {
+  window.BtcDash.chart?.overlayRegistry?.clearAllOverlays?.();
+  const layer = getChartOverlayLayer();
+  if (layer) layer.querySelectorAll('[data-overlay-type]').forEach((node) => node.remove());
+  channelSeries.forEach((series) => { try { tradingChart?.removeSeries?.(series); } catch (error) { /* ignored */ } });
+  channelSeries = [];
+}
+
+function renderActiveLayers(timeframe = getActiveTimeframe()) {
+  const overlays = window.BtcDash.chart.overlays || {};
+  overlays.structure?.renderStructureOverlay?.(timeframe);
+  overlays.sr?.renderSrOverlay?.(timeframe);
+  overlays.fvg?.renderFvgOverlay?.(timeframe);
+  overlays.liquidity?.renderLiquidityOverlay?.(timeframe);
+  overlays.channel?.renderChannelOverlay?.(timeframe);
+  overlays.confluence?.renderConfluenceOverlay?.(timeframe);
+  overlays.scenario?.renderScenarioOverlay?.(timeframe);
+  return window.BtcDash.chart.overlayRegistry?.getOverlayStats?.();
+}
+
+const layerNameMap = { MA: "ma", Structure: "structure", "S/R": "sr", FVG: "fvg", "EQH/EQL": "liquidity", Channel: "channel", Confluence: "confluence", "Scenario Levels": "scenario" };
+const reverseLayerNameMap = Object.fromEntries(Object.entries(layerNameMap).map(([legacy, canonical]) => [canonical, legacy]));
+
+function setLayerState(layer, enabled) {
+  const canonical = layerNameMap[layer] || layer;
+  const legacy = reverseLayerNameMap[canonical] || layer;
+  if (window.BtcDash.state?.chartRuntime?.layerState) window.BtcDash.state.chartRuntime.layerState[canonical] = Boolean(enabled);
+  if (activeLayers && legacy in activeLayers) activeLayers[legacy] = Boolean(enabled);
+  if (!enabled) {
+    window.BtcDash.chart.overlayRegistry?.clearLayer?.(canonical);
+    clearChartOverlayLayer(canonical);
+  } else {
+    renderActiveLayers(getActiveTimeframe());
+  }
+  return getLayerState();
+}
+
+function getLayerState() {
+  return { ...(window.BtcDash.state?.chartRuntime?.layerState || {}) };
+}
+
+function syncLayerControlsToState() {
+  Object.entries(layerNameMap).forEach(([legacy, canonical]) => {
+    if (window.BtcDash.state?.chartRuntime?.layerState) window.BtcDash.state.chartRuntime.layerState[canonical] = Boolean(activeLayers?.[legacy]);
+  });
+  return getLayerState();
+}
+
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.chart = {
+  ...window.BtcDash.chart,
   toChartCandles,
   chart,
   clearTradingChart,
@@ -328,5 +434,15 @@ window.BtcDash.chart = {
   renderFvgZoneBoxes,
   addDummyMarkers,
   addChannelOverlays,
-  renderTradingChart
+  renderTradingChart,
+  initChart,
+  renderChart,
+  rerenderActiveChart,
+  clearChartOverlays,
+  renderActiveLayers,
+  setLayerState,
+  getLayerState,
+  syncLayerControlsToState
 };
+window.BtcDash.renderChart = renderChart;
+window.renderChart = renderChart;

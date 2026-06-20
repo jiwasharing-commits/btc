@@ -191,10 +191,10 @@
   });
   registerPipelineStep({
     name: "UI Render",
-    available: (context) => !context.render || typeof window.BtcDash.ui?.renderAll === "function" || typeof window.renderAll === "function",
+    available: (context) => !context.render || typeof window.BtcDash.ui?.renderDashboardUi === "function" || typeof window.BtcDash.ui?.renderAll === "function" || typeof window.renderAll === "function",
     run: (context) => {
       if (!context.render) return { status: "skipped", message: "Render skipped by caller" };
-      const render = window.BtcDash.ui?.renderAll || window.renderAll;
+      const render = window.BtcDash.ui?.renderDashboardUi || window.BtcDash.ui?.renderAll || window.renderAll;
       if (typeof render !== "function") return { status: "skipped", message: "renderAll is not available" };
       render();
       return { status: "success", message: "UI rendered" };

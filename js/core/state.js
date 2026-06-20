@@ -23,6 +23,23 @@ let candleSeries = null;
 let resizeObserver = null;
 let channelSeries = [];
 const activeLayers = { MA: false, Structure: false, FVG: false, "S/R": false, "EQH/EQL": false, Channel: false, Confluence: false, "Scenario Levels": false };
+const chartRuntime = {
+  activeWorkspace: null,
+  activeTimeframe: null,
+  activeRange: null,
+  layerState: { ma: false, structure: false, sr: false, fvg: false, liquidity: false, channel: false, confluence: false, scenario: false },
+  overlayRegistry: null,
+  lastRenderAt: null,
+  renderCount: 0,
+  warnings: []
+};
+const uiRuntime = {
+  activeBottomTab: null,
+  activeWorkspace: null,
+  lastRenderAt: null,
+  renderCount: 0,
+  warnings: []
+};
 
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.state = {
@@ -67,5 +84,7 @@ window.BtcDash.state = {
   set candleSeries(value) { candleSeries = value; },
   get resizeObserver() { return resizeObserver; },
   set resizeObserver(value) { resizeObserver = value; },
-  channelSeries
+  channelSeries,
+  chartRuntime,
+  uiRuntime
 };

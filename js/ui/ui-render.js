@@ -1,5 +1,7 @@
 function renderTabs(target, items, active, onClickName) {
-  qs(target).innerHTML = items.map((item) => `<button type="button" class="${item === active ? 'active' : ''}" onclick="${onClickName}('${item.replaceAll("'", "\\'")}')">${item}</button>`).join("");
+  const el = qs(target);
+  if (!el) return;
+  el.innerHTML = items.map((item) => `<button type="button" class="${item === active ? 'active' : ''}" onclick="${onClickName}('${item.replaceAll("'", "\\'")}')">${item}</button>`).join("");
 }
 function renderDataStatus() {
   const el = qs('#data-status');
@@ -15,8 +17,11 @@ function renderDataStatus() {
     <span><strong>Status:</strong> ${dataStatusMessage}</span>
     <span><strong>Running Preview:</strong> ${runningPreview}</span>
   `;
-  qs('#auto-update').textContent = `Auto Update: ${autoUpdateEnabled ? "ON" : "OFF"}`;
-  qs('#auto-update').classList.toggle('active', autoUpdateEnabled);
+  const autoUpdateButton = qs('#auto-update');
+  if (autoUpdateButton) {
+    autoUpdateButton.textContent = `Auto Update: ${autoUpdateEnabled ? "ON" : "OFF"}`;
+    autoUpdateButton.classList.toggle('active', autoUpdateEnabled);
+  }
 }
 
 function renderBinanceDebug() {
@@ -362,8 +367,25 @@ function renderAll() {
   renderDetail();
 }
 
+function renderDashboardUi() {
+  renderAll();
+  const runtime = window.BtcDash.state?.uiRuntime;
+  if (runtime) {
+    runtime.activeBottomTab = activeDetail;
+    runtime.activeWorkspace = activeWorkspace;
+    runtime.lastRenderAt = new Date().toISOString();
+    runtime.renderCount += 1;
+  }
+}
+function renderHeader() { return true; }
+function renderGlobalSummary() { return renderSummary(); }
+function renderBottomTabs() { return renderTabs('.detail-tabs', details, activeDetail, 'setDetail'); }
+function renderActivePanel() { return renderDetail(); }
+function rerenderUi(reason = "manual") { renderDashboardUi(); return { reason, rendered: true }; }
+
 window.BtcDash = window.BtcDash || {};
 window.BtcDash.ui = {
+  ...window.BtcDash.ui,
   renderTabs,
   renderDataStatus,
   renderBinanceDebug,
@@ -383,5 +405,14 @@ window.BtcDash.ui = {
   renderMtfChannelCards,
   renderConfluenceTab,
   renderScenarioPlanTab,
-  renderReactionStudyTab
+  renderReactionStudyTab,
+  renderDashboardUi,
+  renderHeader,
+  renderGlobalSummary,
+  renderBottomTabs,
+  renderActivePanel,
+  rerenderUi
 };
+window.BtcDash.ui.renderDashboard = renderDashboardUi;
+window.renderDashboard = renderDashboardUi;
+window.renderUi = renderDashboardUi;
