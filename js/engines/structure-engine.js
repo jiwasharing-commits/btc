@@ -6,10 +6,19 @@
   const STRUCTURE_ROLE_BY_TIMEFRAME = { "1W": "macro", "1D": "context", "4H": "setup", "1H": "timing" };
   const SETUP_SWING_RULES_4H = { minLegBars: 8, minLegMovePct: 1.8, minAtrMove: 1.4, preferRecent: true, maxSetupSwings: 14 };
   const TIMING_SWING_RULES_1H = { minLegBars: 6, minLegMovePct: 0.8, minAtrMove: 1.1, preferRecent: true, maxTimingSwings: 16 };
+  const DEFAULT_OPERATIONAL_SWING_CONFIG = {
+    "4H": { enabled: true, role: "setup", pivotLeft: 3, pivotRight: 3, atrPeriod: 14, atrMultiplier: 1.05, minMovePct: 0.0075, minBarsBetweenSwings: 2, maxBarsBetweenOperationalSwings: 80, allowReplacement: true, requireAlternation: true, useCloseConfirmation: true, maxOperationalSwings: 30, displayMaxSwings: 18, fallbackToExistingSetupSwings: true },
+    "1H": { enabled: true, role: "timing", pivotLeft: 4, pivotRight: 4, atrPeriod: 14, atrMultiplier: 0.90, minMovePct: 0.0035, minBarsBetweenSwings: 3, maxBarsBetweenOperationalSwings: 120, allowReplacement: true, requireAlternation: true, useCloseConfirmation: true, maxOperationalSwings: 36, displayMaxSwings: 22, fallbackToExistingTimingSwings: true, timingOnly: true, canOverrideHtf: false }
+  };
 
   function getConfig(timeframe) {
     const root = window.BtcDash.config?.STRUCTURE_V2_CONFIG || {};
     return { root, tf: root[timeframe] || {}, timeframes: root.timeframes || DEFAULT_TIMEFRAMES };
+  }
+
+  function getOperationalSwingConfig(timeframe) {
+    const root = window.BtcDash.config?.STRUCTURE_V2_CONFIG || {};
+    return { ...(DEFAULT_OPERATIONAL_SWING_CONFIG[timeframe] || { enabled: false }), ...(root.operationalSwingConfig?.[timeframe] || {}) };
   }
 
   function getRole(timeframe) {
@@ -69,6 +78,17 @@
       majorSwings: [],
       setupSwings: [],
       timingSwings: [],
+      confirmedOperationalPivots: [],
+      operationalSwingPath: [],
+      setupOperationalSwings: [],
+      timingOperationalSwings: [],
+      operationalStructureLabels: [],
+      operationalTrendState: null,
+      operationalRejectedPivots: [],
+      operationalReplacementEvents: [],
+      operationalContinuityRescues: [],
+      operationalBosChoch: createNoneBosChoch(reason),
+      operationalWarnings: [],
       structuralSwings: [],
       analysisSwings: [],
       displaySwings: [],
@@ -261,6 +281,222 @@
     });
 
     return { swings: labelStructuralSwings(swings.slice(-maxSwings), timeframe, layerName), stats };
+  }
+
+
+  function detectConfirmedOperationalPivots(candles, timeframe, config = getOperationalSwingConfig(timeframe)) {
+    if (!config.enabled) return { pivots: [], atrSeries: [] };
+    const left = config.pivotLeft ?? 3;
+    const right = config.pivotRight ?? 3;
+    const atrSeries = calculateAtrSeries(candles, config.atrPeriod || 14);
+    const pivots = [];
+    for (let index = left; index < candles.length - right; index += 1) {
+      const candle = candles[index];
+      const high = toNumber(candle.high);
+      const low = toNumber(candle.low);
+      if (high == null || low == null) continue;
+      let isHigh = true;
+      let isLow = true;
+      for (let offset = index - left; offset <= index + right; offset += 1) {
+        if (offset === index) continue;
+        const otherHigh = toNumber(candles[offset]?.high);
+        const otherLow = toNumber(candles[offset]?.low);
+        if (otherHigh == null || high <= otherHigh) isHigh = false;
+        if (otherLow == null || low >= otherLow) isLow = false;
+      }
+      const base = { timeframe, time: toIsoTime(getCandleTime(candle)), timeMs: toTimeMs(getCandleTime(candle)), barIndex: index, index, confirmed: true, source: "confirmedPivot", pivotLeft: left, pivotRight: right, atr: atrSeries[index] };
+      if (isHigh) pivots.push({ ...base, id: `${timeframe}-operational-pivot-high-${index}`, type: "high", price: high });
+      if (isLow) pivots.push({ ...base, id: `${timeframe}-operational-pivot-low-${index}`, type: "low", price: low });
+    }
+    return { pivots: pivots.sort((a, b) => a.barIndex - b.barIndex), atrSeries };
+  }
+
+  function getOperationalSwingThreshold(pivot, lastSwing, atrSeries, config = {}) {
+    const atrAtPivot = Number(pivot.atr ?? atrSeries?.[pivot.barIndex]);
+    const pctThreshold = pivot.price * (config.minMovePct || 0.005);
+    const atrThreshold = Number.isFinite(atrAtPivot) ? atrAtPivot * (config.atrMultiplier || 1) : pctThreshold;
+    return Math.max(pctThreshold, atrThreshold);
+  }
+
+  function createOperationalSwing(pivot, timeframe, role, options = {}) {
+    return {
+      id: `${timeframe}-${role}Operational-${pivot.type}-${pivot.barIndex}`,
+      timeframe,
+      type: pivot.type,
+      price: pivot.price,
+      time: pivot.time,
+      timeMs: pivot.timeMs,
+      barIndex: pivot.barIndex,
+      index: pivot.barIndex,
+      label: pivot.type === "high" ? "SH" : "SL",
+      hierarchy: role === "setup" ? "setupOperational" : "timingOperational",
+      sourceLayer: "operationalSwingPath",
+      layer: role === "setup" ? "setupOperational" : "timingOperational",
+      structureType: role === "setup" ? "setupOperational" : "timingOperational",
+      isStructural: true,
+      isDisplayEligible: true,
+      comparedTo: null,
+      classificationReason: `Initial ${role} operational ${pivot.type}; waiting for same-type reference.`,
+      classificationScope: role,
+      isConfirmedStructure: false,
+      role,
+      breakStatus: "unbroken",
+      qualityScore: 5,
+      sourcePivotId: pivot.id,
+      prevSwingId: options.prevSwingId || null,
+      nextSwingId: null,
+      legSize: options.legSize || 0,
+      legBars: options.legBars || 0,
+      thresholdUsed: options.thresholdUsed || 0,
+      reason: options.reason || "new_zigzag",
+      continuityRescue: Boolean(options.continuityRescue),
+      rescuedFromGap: options.rescuedFromGap || null,
+      gapBars: options.gapBars || 0,
+      rescueReason: options.rescueReason || null
+    };
+  }
+
+  function linkOperationalPath(path) {
+    return path.map((swing, index) => ({ ...swing, pathIndex: index, prevSwingId: path[index - 1]?.id || null, nextSwingId: path[index + 1]?.id || null }));
+  }
+
+  function buildOperationalSwingPath(candles, confirmedPivots, timeframe, config = getOperationalSwingConfig(timeframe), atrSeries = []) {
+    const role = config.role || getRole(timeframe);
+    const path = [];
+    const rejectedPivots = [];
+    const replacementEvents = [];
+    const warnings = [];
+    confirmedPivots.forEach((pivot) => {
+      const last = path[path.length - 1];
+      if (!last) { path.push(createOperationalSwing(pivot, timeframe, role, { reason: "initial_operational_pivot" })); return; }
+      if (pivot.type === last.type) {
+        const moreExtreme = pivot.type === "high" ? pivot.price > last.price : pivot.price < last.price;
+        if (config.allowReplacement && moreExtreme) {
+          const replacement = createOperationalSwing(pivot, timeframe, role, { reason: "replaced_more_extreme_same_type", prevSwingId: path[path.length - 2]?.id || null, legSize: last.legSize, legBars: last.legBars, thresholdUsed: last.thresholdUsed });
+          replacementEvents.push({ replacedSwingId: last.id, replacementSwingId: replacement.id, type: pivot.type, barIndex: pivot.barIndex, reason: "replaced_more_extreme_same_type" });
+          path[path.length - 1] = replacement;
+        } else rejectedPivots.push({ ...pivot, rejectReason: moreExtreme ? "same_type_replacement_disabled" : "same_type_not_more_extreme" });
+        return;
+      }
+      const threshold = getOperationalSwingThreshold(pivot, last, atrSeries, config);
+      const legSize = Math.abs(pivot.price - last.price);
+      const legBars = Math.abs(pivot.barIndex - last.barIndex);
+      if (legSize >= threshold && legBars >= (config.minBarsBetweenSwings || 1)) path.push(createOperationalSwing(pivot, timeframe, role, { reason: "new_zigzag", prevSwingId: last.id, legSize, legBars, thresholdUsed: threshold }));
+      else rejectedPivots.push({ ...pivot, rejectReason: "below_threshold", legSize, legBars, thresholdUsed: threshold });
+    });
+    const limited = linkOperationalPath(path.slice(-(config.maxOperationalSwings || path.length)));
+    return { operationalPivots: confirmedPivots, operationalSwingPath: limited, rejectedPivots, replacementEvents, warnings };
+  }
+
+  function validateOperationalLegContinuity(path, rejectedPivots, timeframe, config = getOperationalSwingConfig(timeframe), atrSeries = []) {
+    const warnings = [];
+    const rescues = [];
+    if (!path.length) return { path, rescues, warnings };
+    let output = [...path];
+    for (let index = 1; index < output.length; index += 1) {
+      const prev = output[index - 1];
+      const current = output[index];
+      const gapBars = Math.abs(current.barIndex - prev.barIndex);
+      if (gapBars <= (config.maxBarsBetweenOperationalSwings || Infinity)) continue;
+      const candidates = (rejectedPivots || []).filter((pivot) => pivot.barIndex > prev.barIndex && pivot.barIndex < current.barIndex && pivot.type !== prev.type && pivot.type !== current.type);
+      const rescue = candidates.map((pivot) => {
+        const threshold = getOperationalSwingThreshold(pivot, prev, atrSeries, config) * 0.75;
+        const legSize = Math.abs(pivot.price - prev.price);
+        const legBars = Math.abs(pivot.barIndex - prev.barIndex);
+        return { pivot, threshold, legSize, legBars, score: legSize / Math.max(1, threshold) + legBars / Math.max(1, gapBars) };
+      }).filter((item) => item.legSize >= item.threshold && item.legBars >= (config.minBarsBetweenSwings || 1)).sort((a, b) => b.score - a.score)[0];
+      if (!rescue) { warnings.push(`Operational gap ${gapBars} bars between ${prev.id} and ${current.id} had no rescue candidate.`); continue; }
+      const swing = createOperationalSwing(rescue.pivot, timeframe, config.role || getRole(timeframe), { reason: "continuity_rescue", prevSwingId: prev.id, legSize: rescue.legSize, legBars: rescue.legBars, thresholdUsed: rescue.threshold, continuityRescue: true, rescuedFromGap: `${prev.id}->${current.id}`, gapBars, rescueReason: "large_gap_best_rejected_opposite_pivot" });
+      output.splice(index, 0, swing);
+      rescues.push(swing);
+      index += 1;
+    }
+    for (let index = 1; index < output.length; index += 1) if (output[index].type === output[index - 1].type) warnings.push(`Consecutive ${output[index].type} at ${output[index - 1].id}/${output[index].id}`);
+    return { path: linkOperationalPath(output), rescues, warnings };
+  }
+
+  function classifyOperationalStructure(path, timeframe, role, config = getOperationalSwingConfig(timeframe)) {
+    let previousHigh = null;
+    let previousLow = null;
+    return (path || []).map((swing, index) => {
+      const next = { ...swing, pathIndex: index, classificationScope: role, role, hierarchy: role === "setup" ? "setupOperational" : "timingOperational", layer: role === "setup" ? "setupOperational" : "timingOperational", structureType: role === "setup" ? "setupOperational" : "timingOperational" };
+      const ref = next.type === "high" ? previousHigh : previousLow;
+      if (!ref) {
+        next.label = next.type === "high" ? "SH" : "SL";
+        next.comparedTo = null;
+        next.previousSameTypePrice = null;
+        next.differencePct = null;
+        next.classificationReason = `${timeframe} initial ${role} operational ${next.type}; no same-type reference yet.`;
+        next.isConfirmedStructure = false;
+      } else if (next.type === "high") {
+        const diff = ref.price ? ((next.price - ref.price) / ref.price) * 100 : 0;
+        next.label = next.price > ref.price ? "HH" : "LH";
+        next.comparedTo = ref.id;
+        next.previousSameTypePrice = ref.price;
+        next.differencePct = Number(diff.toFixed(3));
+        next.classificationReason = next.label === "HH" ? `${timeframe} high exceeded previous ${role} operational high; classified as HH.` : `${timeframe} high failed to exceed previous ${role} operational high; classified as LH.`;
+        next.isConfirmedStructure = true;
+      } else {
+        const diff = ref.price ? ((next.price - ref.price) / ref.price) * 100 : 0;
+        next.label = next.price > ref.price ? "HL" : "LL";
+        next.comparedTo = ref.id;
+        next.previousSameTypePrice = ref.price;
+        next.differencePct = Number(diff.toFixed(3));
+        next.classificationReason = next.label === "HL" ? `${timeframe} low held above previous ${role} operational low; classified as HL.` : `${timeframe} low broke below previous ${role} operational low; classified as LL.`;
+        next.isConfirmedStructure = true;
+      }
+      if (next.type === "high") previousHigh = next;
+      else previousLow = next;
+      return next;
+    });
+  }
+
+  function deriveOperationalTrendState(labeledPath, timeframe, role, config = {}) {
+    const recent = (labeledPath || []).filter((swing) => ["HH", "HL", "LH", "LL"].includes(swing.label)).slice(-4).map((swing) => swing.label);
+    const bullish = recent.includes("HH") && recent.includes("HL");
+    const bearish = recent.includes("LH") && recent.includes("LL");
+    let state = bullish && !bearish ? "bullish" : bearish && !bullish ? "bearish" : bullish && bearish ? "transition" : "range";
+    const label = role === "setup" ? (state === "bullish" ? "Bullish Setup Leaning" : state === "bearish" ? "Bearish Setup Leaning" : state === "transition" ? "Recovery Without BOS" : "Range Setup") : (state === "bullish" ? "Bullish Timing" : state === "bearish" ? "Bearish Timing" : "Range Timing");
+    return { state, label, recentLabels: recent, role, timeframe };
+  }
+
+  function resolveOperationalProtectedLevels(labeledPath, timeframe, role, trendState = {}) {
+    const high = (labeledPath || []).filter((swing) => swing.type === "high").at(-1) || null;
+    const low = (labeledPath || []).filter((swing) => swing.type === "low").at(-1) || null;
+    const hierarchy = role === "setup" ? "setupOperational" : "timingOperational";
+    const isTimingOnly = role === "timing";
+    const protectedHigh = makeProtectedLevel(high, timeframe, role, "high", { isTimingOnly, canOverrideHtf: false, reason: `${timeframe} protected high resolved from ${hierarchy} path.` });
+    const protectedLow = makeProtectedLevel(low, timeframe, role, "low", { isTimingOnly, canOverrideHtf: false, reason: `${timeframe} protected low resolved from ${hierarchy} path.` });
+    if (protectedHigh) protectedHigh.sourceHierarchy = hierarchy;
+    if (protectedLow) protectedLow.sourceHierarchy = hierarchy;
+    return { protectedHigh, protectedLow, timingProtectedHigh: isTimingOnly ? protectedHigh : null, timingProtectedLow: isTimingOnly ? protectedLow : null, lastSwingHigh: protectedHigh, lastSwingLow: protectedLow };
+  }
+
+  function resolveOperationalBosChoch(candles, labeledPath, timeframe, role, config = getOperationalSwingConfig(timeframe)) {
+    const protectedLevels = resolveOperationalProtectedLevels(labeledPath, timeframe, role);
+    const base = deriveBosChochState(candles, labeledPath, timeframe, protectedLevels);
+    const sweepStatus = deriveSweepStatus(candles, labeledPath, timeframe, protectedLevels);
+    return {
+      ...base,
+      eventType: base.type,
+      levelSwingId: base.brokenSwing?.sourceSwingId || base.brokenSwing?.id || null,
+      closeBarIndex: base.confirmedAtIndex,
+      closeTime: base.confirmedAtTime,
+      closePrice: base.confirmedByCandle ? Number(base.confirmedByCandle.close) : null,
+      isCloseConfirmed: base.type === "BOS" || base.type === "CHoCH",
+      sweepEvents: sweepStatus?.hasSweep ? [sweepStatus] : [],
+      weakBreakEvents: base.type === "Weak Break" ? [base] : []
+    };
+  }
+
+  function buildOperationalStructure(candles, timeframe) {
+    const config = getOperationalSwingConfig(timeframe);
+    if (!config.enabled) return { confirmedOperationalPivots: [], operationalSwingPath: [], operationalStructureLabels: [], operationalRejectedPivots: [], operationalReplacementEvents: [], operationalContinuityRescues: [], operationalWarnings: [] };
+    const detected = detectConfirmedOperationalPivots(candles, timeframe, config);
+    const built = buildOperationalSwingPath(candles, detected.pivots, timeframe, config, detected.atrSeries);
+    const continuity = validateOperationalLegContinuity(built.operationalSwingPath, built.rejectedPivots, timeframe, config, detected.atrSeries);
+    const labels = classifyOperationalStructure(continuity.path, timeframe, config.role || getRole(timeframe), config);
+    return { confirmedOperationalPivots: detected.pivots, operationalSwingPath: labels, operationalStructureLabels: labels, operationalRejectedPivots: built.rejectedPivots, operationalReplacementEvents: built.replacementEvents, operationalContinuityRescues: continuity.rescues, operationalWarnings: [...(built.warnings || []), ...(continuity.warnings || [])] };
   }
 
   function labelStructuralSwings(swings, timeframe, layerName) {
@@ -559,11 +795,20 @@
       const validLegSwings = promoted.majorSwings.length ? promoted.majorSwings : promoted.internalSwings;
       const setupSwings = buildSetupSwings(promoted.majorSwings, validLegSwings, timeframe);
       const timingSwings = buildTimingSwings(promoted.internalSwings, timeframe);
+      const operational = (timeframe === "4H" || timeframe === "1H") ? buildOperationalStructure(candles, timeframe) : { confirmedOperationalPivots: [], operationalSwingPath: [], operationalStructureLabels: [], operationalRejectedPivots: [], operationalReplacementEvents: [], operationalContinuityRescues: [], operationalWarnings: [] };
+      const setupOperationalSwings = timeframe === "4H" ? operational.operationalStructureLabels : [];
+      const timingOperationalSwings = timeframe === "1H" ? operational.operationalStructureLabels : [];
       let primary = [];
       let analysisSource = "majorSwings";
       if (role === "macro" || role === "context") { primary = promoted.majorSwings; analysisSource = "majorSwings"; }
-      else if (role === "setup") { primary = setupSwings.length ? setupSwings : promoted.majorSwings; analysisSource = setupSwings.length ? "setupSwings" : "majorSwings"; }
-      else { primary = timingSwings.length ? timingSwings : classifyStructureSwingsV2((promoted.internalSwings || []).map((swing) => cloneSwingForHierarchy(swing, "timing", "Timing fallback from filtered internal swing.")), null, timeframe, role, { hierarchy: "timing" }); analysisSource = "timingSwings"; }
+      else if (role === "setup") {
+        primary = setupOperationalSwings.length >= 3 ? setupOperationalSwings : (setupSwings.length ? setupSwings : promoted.majorSwings);
+        analysisSource = setupOperationalSwings.length >= 3 ? "setupOperationalSwings" : (setupSwings.length ? "setupSwings" : "majorSwings");
+      }
+      else {
+        primary = timingOperationalSwings.length >= 3 ? timingOperationalSwings : (timingSwings.length ? timingSwings : classifyStructureSwingsV2((promoted.internalSwings || []).map((swing) => cloneSwingForHierarchy(swing, "timing", "Timing fallback from filtered internal swing.")), null, timeframe, role, { hierarchy: "timing" }));
+        analysisSource = timingOperationalSwings.length >= 3 ? "timingOperationalSwings" : "timingSwings";
+      }
       if (!primary.length) {
         const empty = createEmptyStructureContext(timeframe, "Raw pivots found but no valid structural swing passed V2 filters.");
         empty.rawPivots = rawPivots;
@@ -572,6 +817,15 @@
         empty.validLegSwings = validLegSwings;
         empty.setupSwings = setupSwings;
         empty.timingSwings = timingSwings;
+        empty.confirmedOperationalPivots = operational.confirmedOperationalPivots;
+        empty.operationalSwingPath = operational.operationalSwingPath;
+        empty.setupOperationalSwings = setupOperationalSwings;
+        empty.timingOperationalSwings = timingOperationalSwings;
+        empty.operationalStructureLabels = operational.operationalStructureLabels;
+        empty.operationalRejectedPivots = operational.operationalRejectedPivots;
+        empty.operationalReplacementEvents = operational.operationalReplacementEvents;
+        empty.operationalContinuityRescues = operational.operationalContinuityRescues;
+        empty.operationalWarnings = operational.operationalWarnings;
         empty.analysisSource = analysisSource;
         empty.displaySource = analysisSource;
         empty.classificationWarnings = ["No primary hierarchy swings available."];
@@ -580,12 +834,21 @@
         try { structureContexts[timeframe] = empty; } catch (error) { /* ignore lexical fallback */ }
         return empty;
       }
-      primary = classifyStructureSwingsV2(primary, null, timeframe, role, { hierarchy: role === "setup" ? "setup" : role === "timing" ? "timing" : "major" });
-      const protectedLevels = resolveProtectedLevelsV2(primary, timeframe, role, candles, tf);
-      const bosChoch = deriveBosChochState(candles, primary, timeframe, protectedLevels);
+      const usesOperational = analysisSource === "setupOperationalSwings" || analysisSource === "timingOperationalSwings";
+      primary = usesOperational ? primary : classifyStructureSwingsV2(primary, null, timeframe, role, { hierarchy: role === "setup" ? "setup" : role === "timing" ? "timing" : "major" });
+      const operationalTrendState = usesOperational ? deriveOperationalTrendState(primary, timeframe, role, getOperationalSwingConfig(timeframe)) : null;
+      const protectedLevels = usesOperational ? resolveOperationalProtectedLevels(primary, timeframe, role, operationalTrendState) : resolveProtectedLevelsV2(primary, timeframe, role, candles, tf);
+      const operationalBosChoch = usesOperational ? resolveOperationalBosChoch(candles, primary, timeframe, role, getOperationalSwingConfig(timeframe)) : null;
+      const bosChoch = operationalBosChoch || deriveBosChochState(candles, primary, timeframe, protectedLevels);
       const sweepStatus = deriveSweepStatus(candles, primary, timeframe, protectedLevels);
       const bias = deriveStructureBias({ timeframe, role, analysisSwings: primary, bosChoch, sweepStatus, protectedLevels });
-      const displaySwings = buildDisplaySwings(primary, timeframe);
+      if (usesOperational && operationalTrendState?.label) {
+        bias.trendState = operationalTrendState.label;
+        bias.status = operationalTrendState.label;
+        bias.setupState = role === "setup" ? operationalTrendState.label : bias.setupState;
+        bias.timingState = role === "timing" ? operationalTrendState.label : bias.timingState;
+      }
+      const displaySwings = usesOperational ? primary.slice(-(getOperationalSwingConfig(timeframe).displayMaxSwings || primary.length)) : buildDisplaySwings(primary, timeframe);
       const displaySource = analysisSource;
       const classificationWarnings = primary.filter((swing) => ["HH", "HL", "LH", "LL"].includes(swing.label) && (!swing.comparedTo || !swing.classificationReason)).map((swing) => `${swing.id} missing comparison metadata`);
       const context = {
@@ -600,6 +863,18 @@
         majorSwings: promoted.majorSwings,
         setupSwings,
         timingSwings,
+        confirmedOperationalPivots: operational.confirmedOperationalPivots,
+        operationalSwingPath: operational.operationalSwingPath,
+        setupOperationalSwings,
+        timingOperationalSwings,
+        operationalStructureLabels: primary,
+        operationalTrendState,
+        operationalRejectedPivots: operational.operationalRejectedPivots,
+        operationalReplacementEvents: operational.operationalReplacementEvents,
+        operationalContinuityRescues: operational.operationalContinuityRescues,
+        operationalBosChoch,
+        operationalWarnings: operational.operationalWarnings,
+        timingOnly: role === "timing",
         structuralSwings: promoted.structuralSwings,
         analysisSwings: primary,
         displaySwings,
@@ -619,7 +894,7 @@
         bosChoch,
         sweepStatus,
         sequence: primary.map((swing) => swing.label).filter(Boolean),
-        debugStats: { ...promoted.debugStats, rawPivotCount: rawPivots.length, internalSwingCount: promoted.internalSwings.length, majorSwingCount: promoted.majorSwings.length, displayedLabelCount: displaySwings.length, setupSwingCount: setupSwings.length, timingSwingCount: timingSwings.length, analysisSource, displaySource, analysisSwingCount: primary.length, displaySwingCount: displaySwings.length, hiddenDisplaySwingCount: Math.max(0, primary.length - displaySwings.length), displayFilterReason: "Clean display swings prioritize valid HH/HL/LH/LL, spacing, move size, and recency.", reason: options.reason || null },
+        debugStats: { ...promoted.debugStats, rawPivotCount: rawPivots.length, internalSwingCount: promoted.internalSwings.length, majorSwingCount: promoted.majorSwings.length, displayedLabelCount: displaySwings.length, setupSwingCount: setupSwings.length, timingSwingCount: timingSwings.length, operationalSwingCount: operational.operationalSwingPath.length, operationalRejectedPivotCount: operational.operationalRejectedPivots.length, operationalReplacementCount: operational.operationalReplacementEvents.length, operationalContinuityRescueCount: operational.operationalContinuityRescues.length, analysisSource, displaySource, analysisSwingCount: primary.length, displaySwingCount: displaySwings.length, hiddenDisplaySwingCount: Math.max(0, primary.length - displaySwings.length), displayFilterReason: "Clean display swings prioritize valid HH/HL/LH/LL, spacing, move size, and recency.", reason: options.reason || null },
         summary: bias.summary,
         note: "Planning context only. Raw Pivot is not structure."
       };
@@ -673,6 +948,47 @@
   }
 
 
+
+  function debugOperationalSwingPath(timeframe = "4H") {
+    const ctx = getStructureContext(timeframe);
+    return {
+      timeframe,
+      role: ctx.role,
+      pivotCount: ctx.confirmedOperationalPivots?.length || 0,
+      operationalSwingCount: ctx.operationalSwingPath?.length || 0,
+      rejectedPivotCount: ctx.operationalRejectedPivots?.length || 0,
+      replacementCount: ctx.operationalReplacementEvents?.length || 0,
+      continuityRescueCount: ctx.operationalContinuityRescues?.length || 0,
+      analysisSource: ctx.analysisSource,
+      displaySource: ctx.displaySource,
+      firstSwing: ctx.operationalSwingPath?.[0] || null,
+      lastSwing: ctx.operationalSwingPath?.at?.(-1) || null,
+      protectedHigh: ctx.protectedHigh,
+      protectedLow: ctx.protectedLow,
+      timingProtectedHigh: ctx.timingProtectedHigh,
+      timingProtectedLow: ctx.timingProtectedLow,
+      bosChoch: ctx.bosChoch,
+      warnings: ctx.operationalWarnings || []
+    };
+  }
+
+  function operationalSwingTable(timeframe = "4H") {
+    const rows = getStructureContext(timeframe)?.operationalSwingPath || [];
+    return rows.map((swing, index) => ({ no: index + 1, barIndex: swing.barIndex ?? swing.index, time: swing.time, type: swing.type, price: swing.price, label: swing.label, reason: swing.reason, thresholdUsed: swing.thresholdUsed, legSize: swing.legSize, legBars: swing.legBars, comparedTo: swing.comparedTo, classificationReason: swing.classificationReason, continuityRescue: Boolean(swing.continuityRescue) }));
+  }
+
+  function printOperationalSwings(timeframe = "4H") {
+    const table = operationalSwingTable(timeframe);
+    if (console?.table) console.table(table);
+    return table;
+  }
+
+  function printOperationalStructureLabels(timeframe = "4H") {
+    const table = operationalSwingTable(timeframe).filter((row) => ["HH", "HL", "LH", "LL", "SH", "SL"].includes(row.label));
+    if (console?.table) console.table(table);
+    return table;
+  }
+
   function debugStructureClassification(timeframe = "4H") {
     const ctx = getStructureContext(timeframe);
     return {
@@ -683,6 +999,8 @@
       majorCount: ctx.majorSwings?.length || 0,
       setupCount: ctx.setupSwings?.length || 0,
       timingCount: ctx.timingSwings?.length || 0,
+      setupOperationalCount: ctx.setupOperationalSwings?.length || 0,
+      timingOperationalCount: ctx.timingOperationalSwings?.length || 0,
       analysisSource: ctx.analysisSource,
       displaySource: ctx.displaySource,
       protectedHigh: ctx.protectedHigh,
@@ -720,6 +1038,9 @@
     buildTimingSwings,
     resolveProtectedLevelsV2,
     classifyStructureSwingsV2,
+    debugOperationalSwingPath,
+    printOperationalSwings,
+    printOperationalStructureLabels,
     debugStructureClassification,
     printStructureSwings,
     getStructureContext,
@@ -737,6 +1058,9 @@
   window.rebuildAllStructureContexts = rebuildStructureContexts;
   window.rebuildStructureForTimeframe = rebuildStructureForTimeframe;
   window.buildMarketStructureContext = rebuildStructureForTimeframe;
+  window.BtcDash.debugOperationalSwingPath = debugOperationalSwingPath;
+  window.BtcDash.printOperationalSwings = printOperationalSwings;
+  window.BtcDash.printOperationalStructureLabels = printOperationalStructureLabels;
   window.BtcDash.debugStructureClassification = debugStructureClassification;
   window.BtcDash.printStructureSwings = printStructureSwings;
 })();
