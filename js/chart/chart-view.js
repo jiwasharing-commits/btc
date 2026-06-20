@@ -62,24 +62,86 @@ function ensureChartRuntime() {
   window.BtcDash.chart.runtime = window.BtcDash.chart.runtime || { chart: null, candleSeries: null, chartContainer: null, activeTimeframe: null, activeWorkspace: null, activeRange: null, chartId: null, lastChartRenderAt: null, lastCandleRenderAt: null };
   return window.BtcDash.chart.runtime;
 }
+
+function getOfficialChartContainer() {
+  return document.getElementById("main-chart");
+}
+
+function measureChartContainer(container) {
+  if (!container) return { exists: false, validForChart: false, reason: "missing-container" };
+  const rect = container.getBoundingClientRect?.() || { width: container.clientWidth || 0, height: container.clientHeight || 0 };
+  const style = window.getComputedStyle ? getComputedStyle(container) : {};
+  const width = Math.floor(rect.width || container.clientWidth || 0);
+  const height = Math.floor(rect.height || container.clientHeight || 0);
+  const display = style.display || "unknown";
+  const visibility = style.visibility || "unknown";
+  const reason = !container.isConnected ? "container-detached" : display === "none" ? "display-none" : visibility === "hidden" ? "visibility-hidden" : width < 600 ? "container-width-invalid" : height < 400 ? "container-height-invalid" : "ready";
+  return { exists: true, id: container.id || null, className: container.className || "", width, height, display, position: style.position || "unknown", visibility, isConnected: Boolean(container.isConnected), validForChart: reason === "ready", reason };
+}
+
+function applyChartContainerSizeFix(container) {
+  if (!container) return;
+  container.classList?.add("btc-main-chart-container");
+  container.style.position = "relative";
+  container.style.width = "100%";
+  container.style.height = "560px";
+  container.style.minHeight = "520px";
+  container.style.overflow = "hidden";
+}
+
+function ensureChartContainerReady(options = {}) {
+  const container = getOfficialChartContainer();
+  let firstMeasure = measureChartContainer(container);
+  const warnings = [];
+  if (container && (!firstMeasure.validForChart || options.forceSizeFix)) {
+    warnings.push(`container-size-fix:${firstMeasure.reason}`);
+    applyChartContainerSizeFix(container);
+  }
+  const finalMeasure = measureChartContainer(container);
+  return { container, firstMeasure, finalMeasure, ready: Boolean(finalMeasure.validForChart), warnings };
+}
+
+function getCanvasDiagnostics() {
+  const container = getOfficialChartContainer();
+  const canvases = [...(container?.querySelectorAll?.("canvas") || [])].map((canvas, index) => {
+    const rect = canvas.getBoundingClientRect?.() || { width: 0, height: 0 };
+    const style = window.getComputedStyle ? getComputedStyle(canvas) : {};
+    return { index, widthAttr: canvas.getAttribute?.("width"), heightAttr: canvas.getAttribute?.("height"), rectWidth: Math.floor(rect.width || 0), rectHeight: Math.floor(rect.height || 0), display: style.display || "unknown", visibility: style.visibility || "unknown", opacity: style.opacity || "unknown", zIndex: style.zIndex || "auto" };
+  });
+  return { canvases, maxCanvasHeight: canvases.reduce((max, canvas) => Math.max(max, canvas.rectHeight || 0), 0) };
+}
+
 function setActiveChartRuntime(runtime = {}) {
   const rt = ensureChartRuntime();
   if (runtime.candleSeries === null && rt.candleSeries && runtime.renderSucceeded !== false) delete runtime.candleSeries;
-  Object.assign(rt, runtime);
+  const official = getOfficialChartContainer();
+  const officialMeasure = measureChartContainer(official);
+  Object.assign(rt, runtime, {
+    activeContainerId: official?.id || runtime.activeContainerId || null,
+    activeContainerRect: officialMeasure.exists ? { width: officialMeasure.width, height: officialMeasure.height } : runtime.activeContainerRect || null,
+    boundToOfficialContainer: runtime.chartContainer ? runtime.chartContainer === official : rt.chartContainer === official,
+    createdAt: rt.createdAt || runtime.createdAt || new Date().toISOString()
+  });
+  if (window.BtcDash.state?.chartRuntime) Object.assign(window.BtcDash.state.chartRuntime, { activeContainerId: rt.activeContainerId, activeContainerRect: rt.activeContainerRect, boundToOfficialContainer: rt.boundToOfficialContainer, chartId: rt.chartId, createdAt: rt.createdAt });
   return rt;
 }
 function getActiveChartRuntime() { return ensureChartRuntime(); }
 function getActiveChart() { return ensureChartRuntime().chart || tradingChart || null; }
 function getActiveCandleSeries() { return ensureChartRuntime().candleSeries || candleSeries || null; }
-function getActiveChartContainer() { return ensureChartRuntime().chartContainer || qs('#main-chart'); }
+function getActiveChartContainer() { return ensureChartRuntime().chartContainer || getOfficialChartContainer(); }
 function getActiveChartTimeframe() { return ensureChartRuntime().activeTimeframe || getActiveTimeframe(); }
-function refreshActiveChartBinding(reason = "manual") { return setActiveChartRuntime({ chart: tradingChart || null, candleSeries: candleSeries || null, chartContainer: qs('#main-chart'), activeTimeframe: getActiveTimeframe(), activeWorkspace, activeRange: rangeState[activeWorkspace] || null, chartId: ensureChartRuntime().chartId || `chart-${Date.now()}`, lastChartRenderAt: new Date().toISOString(), refreshReason: reason }); }
+function refreshActiveChartBinding(reason = "manual") { return setActiveChartRuntime({ chart: tradingChart || null, candleSeries: candleSeries || null, chartContainer: getOfficialChartContainer(), activeTimeframe: getActiveTimeframe(), activeWorkspace, activeRange: rangeState[activeWorkspace] || null, chartId: ensureChartRuntime().chartId || `chart-${Date.now()}`, lastChartRenderAt: new Date().toISOString(), refreshReason: reason }); }
 function getChartBindingDiagnostics() { const rt = ensureChartRuntime(); const apiMode = window.BtcDash.chart.adapter?.detectChartApiMode?.(rt.chart) || { mode: "unknown", warnings: ["adapter unavailable"] }; const warnings = []; if (!rt.chart) warnings.push("missing-active-chart"); if (!rt.candleSeries) warnings.push("missing-candle-series"); if (!rt.chartContainer) warnings.push("missing-chart-container"); return { hasChart: Boolean(rt.chart), hasCandleSeries: Boolean(rt.candleSeries), hasContainer: Boolean(rt.chartContainer), activeTimeframe: rt.activeTimeframe, activeWorkspace: rt.activeWorkspace, chartId: rt.chartId, apiMode: apiMode.mode, libraryVersion: apiMode.libraryVersion, layerState: getLayerState?.() || {}, warnings }; }
 function assertBaseChartReady() {
   const rt = ensureChartRuntime();
   const hasChart = Boolean(rt.chart || tradingChart);
   const hasCandleSeries = Boolean(rt.candleSeries || candleSeries);
-  const hasContainer = Boolean(rt.chartContainer || qs('#main-chart'));
+  const official = getOfficialChartContainer();
+  const activeContainer = rt.chartContainer || official;
+  const activeMeasure = measureChartContainer(activeContainer);
+  const canvasDiag = getCanvasDiagnostics();
+  const hasContainer = Boolean(activeContainer);
+  const activeSameAsOfficial = Boolean(activeContainer && official && activeContainer === official);
   const setDataSuccess = rt.lastSetDataStatus ? Boolean(rt.lastSetDataStatus.success) : Boolean(hasCandleSeries);
   const formatted = getFormattedCandlesForTimeframe(getActiveChartTimeframe());
   const visibleDiagnostics = getVisibleRangeDiagnostics(getActiveChartTimeframe(), rangeState[activeWorkspace]);
@@ -87,8 +149,10 @@ function assertBaseChartReady() {
   const hasValidTimes = Number.isFinite(formatted[0]?.time) && Number.isFinite(formatted.at(-1)?.time);
   const visibleOk = visibleDiagnostics.visibleCandlesInRange === null || visibleDiagnostics.visibleCandlesInRange > 0;
   const warnings = [...(visibleDiagnostics.warnings || [])];
-  const reason = !hasChart ? "missing-chart" : !hasCandleSeries ? "missing-candle-series" : !hasContainer ? "missing-chart-container" : !setDataSuccess ? "set-data-failed" : !formattedCandleCount ? "missing-formatted-candles" : !hasValidTimes ? "invalid-chart-time" : !visibleOk ? "visible-range-has-no-candles" : "ready";
-  return { ready: hasChart && hasCandleSeries && hasContainer && setDataSuccess && formattedCandleCount > 0 && hasValidTimes && visibleOk, hasChart, hasCandleSeries, hasContainer, setDataSuccess, formattedCandleCount, visibleCandlesInRange: visibleDiagnostics.visibleCandlesInRange, reason, warnings };
+  const containerOk = activeSameAsOfficial && activeMeasure.height >= 400;
+  const canvasOk = canvasDiag.maxCanvasHeight === 0 || canvasDiag.maxCanvasHeight >= 400;
+  const reason = !hasChart ? "missing-chart" : !hasCandleSeries ? "missing-candle-series" : !hasContainer ? "missing-chart-container" : !activeSameAsOfficial ? "active-container-not-official" : activeMeasure.height < 400 ? "active-container-height-invalid" : !setDataSuccess ? "set-data-failed" : !formattedCandleCount ? "missing-formatted-candles" : !hasValidTimes ? "invalid-chart-time" : !visibleOk ? "visible-range-has-no-candles" : !canvasOk ? "canvas-height-invalid" : "ready";
+  return { ready: hasChart && hasCandleSeries && hasContainer && containerOk && canvasOk && setDataSuccess && formattedCandleCount > 0 && hasValidTimes && visibleOk, hasChart, hasCandleSeries, hasContainer, setDataSuccess, formattedCandleCount, visibleCandlesInRange: visibleDiagnostics.visibleCandlesInRange, activeContainerSameAsOfficial: activeSameAsOfficial, activeContainerHeight: activeMeasure.height, maxCanvasHeight: canvasDiag.maxCanvasHeight, reason, warnings };
 }
 function debugBaseChart() {
   const timeframe = getActiveChartTimeframe();
@@ -99,7 +163,8 @@ function debugBaseChart() {
   const chart = getActiveChart();
   const series = getActiveCandleSeries();
   const api = window.BtcDash.chart.adapter?.detectChartApiMode?.(chart) || { mode: "unknown", warnings: ["adapter unavailable"] };
-  const warnings = [...(api.warnings || [])];
+  const binding = debugChartContainerBinding();
+  const warnings = [...(api.warnings || []), ...(binding.warnings || [])];
   if (!chart) warnings.push("missing-chart");
   if (!candles.length) warnings.push("missing-candles");
   if (!series) warnings.push(rt.lastCandleCreateWarning || "series-create-failed");
@@ -122,6 +187,12 @@ function debugBaseChart() {
     visibleRange: timeScaleDebug.visibleRange,
     visibleCandlesInRange: timeScaleDebug.visibleCandlesInRange,
     timeUnitWarnings: timeScaleDebug.warnings,
+    officialContainerHeight: binding.officialContainer.height,
+    activeContainerHeight: binding.activeContainer.height,
+    activeContainerSameAsOfficial: binding.activeContainer.sameAsOfficial,
+    maxCanvasHeight: Math.max(0, ...binding.canvases.map((canvas) => canvas.rectHeight || 0)),
+    chartContainerBindingValid: binding.valid,
+    chartContainerBindingReason: binding.reason,
     setDataSuccess: Boolean(rt.lastSetDataStatus?.success),
     lastCandleRenderAt: rt.lastCandleRenderAt || null,
     candleSeriesMethods: { hasSetData: typeof series?.setData === "function", hasSetMarkers: typeof series?.setMarkers === "function", hasPriceToCoordinate: typeof series?.priceToCoordinate === "function" },
@@ -201,6 +272,70 @@ function applyChartRange(timeframe = getActiveChartTimeframe(), rangeKey = range
   return { applied: true, mode: normalized?.valid ? "setVisibleRange" : "fitContent", range: normalized, diagnostics, warnings };
 }
 
+
+function debugChartContainerBinding() {
+  const official = getOfficialChartContainer();
+  const active = getActiveChartContainer();
+  const officialMeasure = measureChartContainer(official);
+  const activeMeasure = measureChartContainer(active);
+  const internal = [...(official?.querySelectorAll?.(".tv-lightweight-charts") || [])].map((node, index) => ({ index, ...measureChartContainer(node) }));
+  const canvasDiag = getCanvasDiagnostics();
+  const rt = ensureChartRuntime();
+  const sameAsOfficial = Boolean(active && official && active === official);
+  const warnings = [];
+  if (!officialMeasure.exists) warnings.push("official-container-missing");
+  if (officialMeasure.height < 400) warnings.push("official-container-height-invalid");
+  if (!sameAsOfficial) warnings.push("active-container-not-official");
+  if (canvasDiag.canvases.length && canvasDiag.maxCanvasHeight < 400) warnings.push("canvas-height-invalid");
+  const valid = officialMeasure.exists && officialMeasure.height >= 400 && sameAsOfficial && Boolean(rt.chart) && Boolean(rt.candleSeries) && (!canvasDiag.canvases.length || canvasDiag.maxCanvasHeight >= 400);
+  const reason = !officialMeasure.exists ? "official-container-missing" : officialMeasure.height < 400 ? "official-container-height-invalid" : !sameAsOfficial ? "active-container-not-official" : !rt.chart ? "missing-chart" : !rt.candleSeries ? "missing-candle-series" : canvasDiag.canvases.length && canvasDiag.maxCanvasHeight < 400 ? "canvas-height-invalid" : "ready";
+  return {
+    officialContainer: { exists: officialMeasure.exists, width: officialMeasure.width, height: officialMeasure.height, display: officialMeasure.display, position: officialMeasure.position, visibility: officialMeasure.visibility, className: officialMeasure.className },
+    activeContainer: { exists: activeMeasure.exists, sameAsOfficial, width: activeMeasure.width, height: activeMeasure.height, display: activeMeasure.display, position: activeMeasure.position, visibility: activeMeasure.visibility, className: activeMeasure.className },
+    lightweightInternal: { count: internal.length, rects: internal },
+    canvases: canvasDiag.canvases,
+    chartRuntime: { chartId: rt.chartId, activeTimeframe: rt.activeTimeframe, activeWorkspace: rt.activeWorkspace, boundToOfficialContainer: rt.boundToOfficialContainer, hasChart: Boolean(rt.chart), hasCandleSeries: Boolean(rt.candleSeries) },
+    valid,
+    reason,
+    warnings
+  };
+}
+
+function ensureCanvasHeightValid(reason = "unknown") {
+  const chart = getActiveChart();
+  const containerStatus = ensureChartContainerReady();
+  const measure = containerStatus.finalMeasure;
+  let canvasDiag = getCanvasDiagnostics();
+  if (chart?.resize && measure.width && measure.height && canvasDiag.maxCanvasHeight < 400) {
+    chart.resize(Math.max(600, measure.width), Math.max(420, measure.height), true);
+    chart.timeScale?.()?.fitContent?.();
+    canvasDiag = getCanvasDiagnostics();
+  }
+  return { reason, container: measure, ...canvasDiag, recovered: canvasDiag.maxCanvasHeight >= 400 };
+}
+
+function hardResetChartRuntime(reason = "manual") {
+  const official = getOfficialChartContainer();
+  const oldChart = getActiveChart();
+  window.BtcDash.chart.overlayRegistry?.clearAllOverlays?.();
+  window.BtcDash.chart.markers?.clearAllMarkers?.();
+  try { oldChart?.remove?.(); } catch (error) { console.warn("[BTC Dash] chart hard reset remove failed", error); }
+  tradingChart = null;
+  candleSeries = null;
+  channelSeries = [];
+  if (official) official.innerHTML = "";
+  ensureChartContainerReady({ forceSizeFix: true });
+  const rendered = renderTradingChart({ hardReset: true, reason });
+  return { reason, rendered, container: debugChartContainerBinding(), baseChart: debugBaseChart() };
+}
+
+function recoverVisibleChart() {
+  const container = ensureChartContainerReady({ forceSizeFix: true });
+  const reset = hardResetChartRuntime("manual-visible-chart-recovery");
+  const canvas = ensureCanvasHeightValid("manual-visible-chart-recovery");
+  return { container, reset, canvas, binding: debugChartContainerBinding(), baseChart: debugBaseChart() };
+}
+
 function debugTimeScale() {
   return getVisibleRangeDiagnostics(getActiveChartTimeframe(), rangeState[activeWorkspace]);
 }
@@ -218,7 +353,7 @@ function chart(title, timeframe, closedCandles, strip = []) {
   ${rangeSelector(getActiveConfig())}
   <div class="chart-panel tradingview-panel">
     <div class="chart-title"><h2>${title}</h2><p>Candles loaded: ${countLabel} • Visible closed: ${closedCandles.length} • Active TF last closed: ${fmtPrice(lastClosed?.close)}${runningLabel}</p></div>
-    <div id="main-chart" class="trading-chart" aria-label="TradingView-style candlestick chart"></div>
+    <div id="main-chart" class="trading-chart btc-main-chart-container" aria-label="TradingView-style candlestick chart"></div>
     <div id="chart-overlay-layer" class="chart-overlay-layer" aria-hidden="true"></div>
     <div class="running-overlay ${hasRunningPreview ? '' : 'is-hidden'}"><span>Running Preview<br><small>Preview Only</small></span></div>
     <div class="chart-watermark">${timeframe} • BTCUSDT</div>
@@ -640,10 +775,12 @@ function addChannelOverlays(candles, timeframe) {
   });
 }
 
-function renderTradingChart() {
+function renderTradingChart(options = {}) {
   clearTradingChart();
-  const container = qs('#main-chart');
-  if (!container || activeWorkspace === 'MTF Summary') return;
+  const containerReady = ensureChartContainerReady({ forceSizeFix: options.forceSizeFix });
+  const container = containerReady.container;
+  if (!container || activeWorkspace === 'MTF Summary') return { rendered: false, reason: containerReady.finalMeasure?.reason || "missing-container" };
+  if (!containerReady.ready) return { rendered: false, reason: containerReady.finalMeasure?.reason || "container-not-ready", containerReady };
   if (!window.LightweightCharts) {
     container.innerHTML = `<div class="status-panel error">Failed to load TradingView Lightweight Charts CDN.</div>`;
     return;
@@ -658,9 +795,13 @@ function renderTradingChart() {
     return;
   }
 
+  const rect = container.getBoundingClientRect();
+  const chartWidth = Math.max(600, Math.floor(rect.width || container.clientWidth || 1200));
+  const chartHeight = Math.max(420, Math.floor(rect.height || container.clientHeight || 560));
   tradingChart = LightweightCharts.createChart(container, {
-    width: container.clientWidth,
-    height: container.clientHeight,
+    width: chartWidth,
+    height: chartHeight,
+    autoSize: false,
     layout: { background: { color: "#0b1220" }, textColor: "#cbd5e1", fontFamily: "Inter, system-ui, sans-serif" },
     grid: {
       vertLines: { color: "rgba(148, 163, 184, 0.12)" },
@@ -672,6 +813,7 @@ function renderTradingChart() {
     handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
     handleScale: { axisPressedMouseMove: true, mouseWheel: false, pinch: true }
   });
+  tradingChart.resize?.(chartWidth, chartHeight, true);
 
   const candleOptions = getBaseCandleOptions();
   const formatted = formatCandlesForChart(displayCandles, timeframe);
@@ -707,6 +849,13 @@ function renderTradingChart() {
   }
   tradingChart.timeScale().fitContent();
   applyChartRange(timeframe, rangeState[activeWorkspace]);
+  ensureCanvasHeightValid("after-candle-render");
+  requestAnimationFrame(() => {
+    const r = container.getBoundingClientRect();
+    tradingChart?.resize?.(Math.max(600, Math.floor(r.width || chartWidth)), Math.max(420, Math.floor(r.height || chartHeight)), true);
+    tradingChart?.timeScale?.()?.fitContent?.();
+    applyChartRange(timeframe, rangeState[activeWorkspace]);
+  });
   window.BtcDash.chart.markers?.reapplyActiveMarkers?.("after-candle-render");
   requestAnimationFrame(() => {
     renderActiveLayers(timeframe, { reason: "chart-render" });
@@ -803,6 +952,13 @@ window.BtcDash.chart = {
   ...window.BtcDash.chart,
   toChartCandles,
   formatCandlesForChart,
+  getOfficialChartContainer,
+  measureChartContainer,
+  ensureChartContainerReady,
+  ensureCanvasHeightValid,
+  hardResetChartRuntime,
+  recoverVisibleChart,
+  debugChartContainerBinding,
   applyChartRange,
   debugTimeScale,
   chart,

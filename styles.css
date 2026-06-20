@@ -387,3 +387,30 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
   font-size: 0.66rem;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
 }
+
+/* Prompt 6G: official visible Lightweight Charts mount point. */
+#main-chart,
+.trading-chart,
+.btc-main-chart-container {
+  position: relative !important;
+  width: 100% !important;
+  height: 560px !important;
+  min-height: 520px !important;
+  max-height: 720px !important;
+  overflow: hidden;
+}
+#main-chart .tv-lightweight-charts {
+  width: 100% !important;
+  height: 100% !important;
+}
+#main-chart canvas {
+  max-width: 100%;
+}
+@media (max-width: 768px) {
+  #main-chart,
+  .trading-chart,
+  .btc-main-chart-container {
+    height: 460px !important;
+    min-height: 420px !important;
+  }
+}
