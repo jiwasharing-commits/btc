@@ -1,0 +1,39 @@
+(function () {
+  window.BtcDash = window.BtcDash || {};
+  window.BtcDash.ui = window.BtcDash.ui || {};
+  window.BtcDash.ui.panels = window.BtcDash.ui.panels || {};
+
+  function formatPrice(value) { return window.BtcDash.ui.formatters?.formatPrice?.(value) || (value ? Number(value).toLocaleString() : "—"); }
+  function structureCard(timeframe, title, notePrefix) {
+    const context = window.BtcDash.state?.structureContexts?.[timeframe] || {};
+    const last = (context.analysisSwings || context.labels || []).at(-1);
+    return { title, value: context.bias || "Neutral", note: `${notePrefix}: ${context.status || "No Clear Structure"}${last?.label ? ` · Last ${last.label}` : ""}` };
+  }
+
+  function buildSummaryCardData() {
+    const state = window.BtcDash.state || {};
+    const tf = window.BtcDash.utils?.getActiveTimeframe?.() || "1W";
+    const last = state.marketData?.[tf]?.at(-1);
+    const cards = [
+      { title: "Current Price", value: formatPrice(last?.close), note: `${tf} closed candle` },
+      structureCard("1W", "Weekly Structure", "Macro bias"),
+      structureCard("1D", "Daily Context", "Context"),
+      structureCard("4H", "4H Setup", "Setup"),
+      structureCard("1H", "1H Timing", "Timing only"),
+      { title: "Confluence", value: state.confluenceContext?.strongestCandidate ? `${state.confluenceContext.strongestCandidate.score}/10` : "No Candidate", note: state.confluenceContext?.summary || "Reference only" },
+      { title: "Scenario", value: state.scenarioContext?.primaryScenario?.label || "No Scenario", note: state.scenarioContext?.summary || "Planning context only" }
+    ];
+    if (window.BtcDash.config?.AUDIT_QUALITY_CONFIG?.ui?.showAuditSummaryCard) {
+      const audit = state.auditQualityContext || {};
+      cards.push({ title: "Audit Quality", value: audit.status || "Not Run", note: audit.summary ? `Critical ${audit.summary.criticalCount || 0} · Warning ${audit.summary.warningCount || 0}` : "Audit not run yet." });
+    }
+    return cards;
+  }
+
+  function renderSummaryCard(card) {
+    const auditClass = card.title === "Audit Quality" ? " audit-summary-card" : "";
+    return `<article class="summary-card${auditClass}"><span>${card.title}</span><strong>${card.value || "—"}</strong><small>${card.note || ""}</small></article>`;
+  }
+  function renderGlobalSummaryCards() { return buildSummaryCardData().map(renderSummaryCard).join(""); }
+  window.BtcDash.ui.panels.summaryCards = { renderGlobalSummaryCards, buildSummaryCardData, renderSummaryCard };
+})();
