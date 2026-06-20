@@ -170,13 +170,25 @@
   });
   registerPipelineStep({
     name: "FVG",
-    available: () => typeof resolveFunction("rebuildAllFvgContexts") === "function",
-    run: () => runNamedAnalysisFunction("rebuildAllFvgContexts")
+    available: () => typeof window.BtcDash.engines?.fvg?.rebuildFvgContexts === "function" || typeof resolveFunction("rebuildAllFvgContexts") === "function",
+    run: () => {
+      if (typeof window.BtcDash.engines?.fvg?.rebuildFvgContexts === "function") {
+        window.BtcDash.engines.fvg.rebuildFvgContexts({ reason: "pipeline" });
+        return { status: "success", message: "FVG V2 contexts rebuilt" };
+      }
+      return runNamedAnalysisFunction("rebuildAllFvgContexts");
+    }
   });
   registerPipelineStep({
     name: "Channel",
-    available: () => typeof resolveFunction("rebuildAllChannelContexts") === "function",
-    run: () => runNamedAnalysisFunction("rebuildAllChannelContexts")
+    available: () => typeof window.BtcDash.engines?.channel?.rebuildChannelContexts === "function" || typeof resolveFunction("rebuildAllChannelContexts") === "function",
+    run: () => {
+      if (typeof window.BtcDash.engines?.channel?.rebuildChannelContexts === "function") {
+        window.BtcDash.engines.channel.rebuildChannelContexts({ reason: "pipeline" });
+        return { status: "success", message: "Channel V2 contexts rebuilt" };
+      }
+      return runNamedAnalysisFunction("rebuildAllChannelContexts");
+    }
   });
   registerPipelineStep({
     name: "Market Zones Base",

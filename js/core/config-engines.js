@@ -72,6 +72,25 @@
     "1H": { role: "timing", sourceSwingLayer: "internal", atrLength: 14, zoneAtrMultiplier: 0.45, zonePctTolerance: 0.25, mergePctTolerance: 0.40, breakBufferPct: 0.10, sweepBufferPct: 0.06, weakBreakBufferPct: 0.04, retestTolerancePct: 0.30, confirmationCloseCount: 2, minTouchesForFreshZone: 1, minTouchesForConfirmedZone: 2, minScoreToDisplay: 4.2, minScoreForMarketZone: 5.2, maxActiveSupport: 3, maxActiveResistance: 3, maxHistoricalZones: 12, maxZoneAgeBars: 360, recentTouchBars: 120, recencyHalfLifeBars: 180, htfPriorityWeight: 1.05, reactionWeight: 1.15, confluenceWeight: 1.05, maxProjectedDistancePct: 7, label: "1H Timing S/R" }
   };
 
+
+  const FVG_V2_CONFIG = {
+    enabled: true,
+    timeframes: ["1W", "1D", "4H", "1H"],
+    "1W": { role: "macro", atrLength: 14, minGapPct: 1.25, minGapAtr: 0.45, displacementBodyPct: 55, displacementAtrMultiplier: 1.20, requireDisplacementCandle: true, midpointEnabled: true, minScoreToDisplay: 5.2, minScoreForMarketZone: 6.0, maxActiveBullish: 3, maxActiveBearish: 3, maxHistoricalFvgs: 6, maxFvgAgeBars: 80, recentTouchBars: 30, recencyHalfLifeBars: 45, partialFillThresholdPct: 25, midpointFillThresholdPct: 50, deepFillThresholdPct: 70, filledThresholdPct: 95, breakBufferPct: 0.35, weakBreakBufferPct: 0.15, mitigationCloseRequired: true, inverseFvgEnabled: true, inverseRetestBars: 12, overlapSuppressionEnabled: true, maxOverlapDistancePct: 1.50, maxProjectedDistancePct: 999, label: "Weekly Macro FVG" },
+    "1D": { role: "context", atrLength: 14, minGapPct: 0.70, minGapAtr: 0.35, displacementBodyPct: 52, displacementAtrMultiplier: 1.05, requireDisplacementCandle: true, midpointEnabled: true, minScoreToDisplay: 5.0, minScoreForMarketZone: 5.8, maxActiveBullish: 3, maxActiveBearish: 3, maxHistoricalFvgs: 8, maxFvgAgeBars: 120, recentTouchBars: 45, recencyHalfLifeBars: 70, partialFillThresholdPct: 25, midpointFillThresholdPct: 50, deepFillThresholdPct: 70, filledThresholdPct: 95, breakBufferPct: 0.25, weakBreakBufferPct: 0.12, mitigationCloseRequired: true, inverseFvgEnabled: true, inverseRetestBars: 18, overlapSuppressionEnabled: true, maxOverlapDistancePct: 0.90, maxProjectedDistancePct: 24, label: "Daily Context FVG" },
+    "4H": { role: "setup", atrLength: 14, minGapPct: 0.35, minGapAtr: 0.28, displacementBodyPct: 50, displacementAtrMultiplier: 0.90, requireDisplacementCandle: true, midpointEnabled: true, minScoreToDisplay: 4.8, minScoreForMarketZone: 5.6, maxActiveBullish: 3, maxActiveBearish: 3, maxHistoricalFvgs: 10, maxFvgAgeBars: 180, recentTouchBars: 70, recencyHalfLifeBars: 100, partialFillThresholdPct: 25, midpointFillThresholdPct: 50, deepFillThresholdPct: 70, filledThresholdPct: 95, breakBufferPct: 0.15, weakBreakBufferPct: 0.08, mitigationCloseRequired: true, inverseFvgEnabled: true, inverseRetestBars: 24, overlapSuppressionEnabled: true, maxOverlapDistancePct: 0.55, maxProjectedDistancePct: 12, label: "4H Setup FVG" },
+    "1H": { role: "timing", atrLength: 14, minGapPct: 0.18, minGapAtr: 0.22, displacementBodyPct: 48, displacementAtrMultiplier: 0.75, requireDisplacementCandle: false, midpointEnabled: true, minScoreToDisplay: 4.5, minScoreForMarketZone: 5.3, maxActiveBullish: 3, maxActiveBearish: 3, maxHistoricalFvgs: 12, maxFvgAgeBars: 240, recentTouchBars: 90, recencyHalfLifeBars: 130, partialFillThresholdPct: 25, midpointFillThresholdPct: 50, deepFillThresholdPct: 70, filledThresholdPct: 95, breakBufferPct: 0.10, weakBreakBufferPct: 0.05, mitigationCloseRequired: true, inverseFvgEnabled: true, inverseRetestBars: 36, overlapSuppressionEnabled: true, maxOverlapDistancePct: 0.30, maxProjectedDistancePct: 6, label: "1H Timing FVG" }
+  };
+
+  const CHANNEL_V2_CONFIG = {
+    enabled: true,
+    timeframes: ["1W", "1D", "4H", "1H"],
+    "1W": { role: "macro", sourceSwingLayer: "major", minAnchorSwings: 4, minTouchesTotal: 3, minTouchesMainSide: 2, requireAdditionalTouchAfterAnchors: true, maxActiveChannels: 1, maxHistoricalChannels: 3, maxProjectionBars: 24, maxProjectedDistancePct: 999, minChannelWidthAtr: 1.5, maxChannelWidthPct: 45, slopeTolerancePct: 0.8, breakBufferPct: 0.40, weakBreakBufferPct: 0.15, nearBoundaryPct: 2.5, toleranceAtrMultiplier: 0.60, maxFitErrorAtr: 1.40, minInlierRatio: 0.45, maxAnchorAgeBars: 100, maxRecentTouchBars: 40, minScoreToDisplay: 6.5, minScoreForMarketZone: 6.2, useZoneBands: true, autoscalePolicy: "candleOnly", label: "Weekly Macro Channel" },
+    "1D": { role: "context", sourceSwingLayer: "major", minAnchorSwings: 4, minTouchesTotal: 3, minTouchesMainSide: 2, requireAdditionalTouchAfterAnchors: true, maxActiveChannels: 1, maxHistoricalChannels: 4, maxProjectionBars: 40, maxProjectedDistancePct: 35, minChannelWidthAtr: 1.4, maxChannelWidthPct: 30, slopeTolerancePct: 0.6, breakBufferPct: 0.25, weakBreakBufferPct: 0.12, nearBoundaryPct: 1.5, toleranceAtrMultiplier: 0.55, maxFitErrorAtr: 1.30, minInlierRatio: 0.45, maxAnchorAgeBars: 160, maxRecentTouchBars: 80, minScoreToDisplay: 6.2, minScoreForMarketZone: 6.0, useZoneBands: true, autoscalePolicy: "candleOnly", label: "Daily Context Channel" },
+    "4H": { role: "setup", sourceSwingLayer: "internal", minAnchorSwings: 5, minTouchesTotal: 3, minTouchesMainSide: 2, requireAdditionalTouchAfterAnchors: true, maxActiveChannels: 1, maxHistoricalChannels: 5, maxProjectionBars: 60, maxProjectedDistancePct: 18, minChannelWidthAtr: 1.2, maxChannelWidthPct: 18, slopeTolerancePct: 0.45, breakBufferPct: 0.15, weakBreakBufferPct: 0.08, nearBoundaryPct: 0.8, toleranceAtrMultiplier: 0.50, maxFitErrorAtr: 1.20, minInlierRatio: 0.45, maxAnchorAgeBars: 240, maxRecentTouchBars: 120, minScoreToDisplay: 6.0, minScoreForMarketZone: 5.8, useZoneBands: true, autoscalePolicy: "candleOnly", label: "4H Setup Channel" },
+    "1H": { role: "timing", sourceSwingLayer: "internal", minAnchorSwings: 6, minTouchesTotal: 3, minTouchesMainSide: 2, requireAdditionalTouchAfterAnchors: true, maxActiveChannels: 1, maxHistoricalChannels: 5, maxProjectionBars: 80, maxProjectedDistancePct: 10, minChannelWidthAtr: 1.0, maxChannelWidthPct: 10, slopeTolerancePct: 0.35, breakBufferPct: 0.10, weakBreakBufferPct: 0.05, nearBoundaryPct: 0.45, toleranceAtrMultiplier: 0.45, maxFitErrorAtr: 1.10, minInlierRatio: 0.45, maxAnchorAgeBars: 360, maxRecentTouchBars: 180, minScoreToDisplay: 5.8, minScoreForMarketZone: 5.6, useZoneBands: true, autoscalePolicy: "candleOnly", label: "1H Timing Channel" }
+  };
+
   const AUDIT_QUALITY_CONFIG = {
     enabled: true,
     timeframes: ["1W", "1D", "4H", "1H"],
@@ -99,8 +118,8 @@
         structureContexts: ["available", "timeframe", "rawPivots", "internalSwings", "majorSwings", "analysisSwings", "displaySwings", "labels", "trendState", "bias", "bosChoch", "summary"],
         liquidityContexts: ["available", "timeframe", "rawEqualHighs", "rawEqualLows", "buySidePools", "sellSidePools", "activeBuySidePools", "activeSellSidePools", "visiblePools", "marketZoneRows", "summary", "status"],
         srContexts: ["available", "timeframe", "rawLevels", "zoneClusters", "zones", "activeSupports", "activeResistances", "nearestSupport", "nearestResistance", "visibleZones", "marketZoneRows", "summary", "status"],
-        fvgContexts: ["available", "timeframe", "activeFvgs", "nearestFvg", "summary"],
-        channelContexts: ["available", "timeframe", "status", "direction", "summary"],
+        fvgContexts: ["available", "timeframe", "rawFvgs", "validFvgs", "activeBullish", "activeBearish", "visibleFvgs", "marketZoneRows", "summary", "status"],
+        channelContexts: ["available", "timeframe", "localChannel", "projectedChannels", "historicalChannels", "nearestBoundary", "marketZoneRows", "summary", "status"],
         marketZoneContexts: ["activeTimeframe", "upside", "downside", "summary"]
       }
     },
@@ -122,6 +141,8 @@
     STRUCTURE_V2_CONFIG,
     LIQUIDITY_V2_CONFIG,
     SR_V2_CONFIG,
+    FVG_V2_CONFIG,
+    CHANNEL_V2_CONFIG,
     AUDIT_QUALITY_CONFIG
   });
 })();

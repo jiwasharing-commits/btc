@@ -348,9 +348,9 @@ function renderDetail() {
       const context = structureContexts[getActiveTimeframe()] ?? createEmptyStructureContext(getActiveTimeframe());
       return `${grid([['Active TF Bias', context.bias],['Structure Status', context.status],['Last Swing High', fmtPrice(context.lastSwingHigh?.price)],['Last Swing Low', fmtPrice(context.lastSwingLow?.price)],['BOS / CHoCH', context.bosChoch?.status],['Sequence', formatStructureSequence(context)]], 'detail-grid six')}<div class="structure-note card">${context.summary}</div>${renderMtfStructureCards()}`;
     })(),
-    'FVG': renderFvgTab(),
+    'FVG': window.BtcDash.ui.panels?.fvg?.renderPanel?.() || renderFvgTab(),
     'S/R': window.BtcDash.ui.panels?.sr?.renderPanel?.() || renderSrTab(),
-    'Channel': renderChannelTab(),
+    'Channel': window.BtcDash.ui.panels?.channel?.renderPanel?.() || renderChannelTab(),
     'Confluence': renderConfluenceTab(),
     'Reaction Study': renderReactionStudyTab(),
     'Audit': window.BtcDash.ui.panels?.audit?.renderPanel?.() || '<div class="panel-empty-state">Audit not available.</div>',

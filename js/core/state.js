@@ -8,7 +8,9 @@ const srContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
 const srDebugStats = { enabled: false, lastBuildAt: null, rawLevelCount: 0, zoneClusterCount: 0, activeSupportCount: 0, activeResistanceCount: 0, brokenZoneCount: 0, flippedZoneCount: 0, sweptZoneCount: 0, historicalZoneCount: 0, marketZoneRowCount: 0, warnings: [] };
 let marketZonesContext = { upside: [], downside: [], nearestSupport: null, nearestResistance: null, activeTimeframe: null, summary: "" };
 const fvgContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
+const fvgDebugStats = { enabled: false, lastBuildAt: null, rawFvgCount: 0, validFvgCount: 0, hiddenSmallGapCount: 0, hiddenLowScoreCount: 0, activeCount: 0, partialCount: 0, midpointTouchedCount: 0, mitigatedCount: 0, filledCount: 0, inverseCount: 0, invalidatedCount: 0, projectedCount: 0, marketZoneRowCount: 0, warnings: [] };
 const channelContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
+const channelDebugStats = { enabled: false, lastBuildAt: null, candidateChannelCount: 0, activeChannelCount: 0, historicalChannelCount: 0, projectedChannelCount: 0, noClearChannelCount: 0, rejectedRawPivotCount: 0, marketZoneRowCount: 0, warnings: [] };
 let confluenceContext = { available: false, activeTimeframe: null, candidates: [], strongestCandidate: null, upsideCandidates: [], downsideCandidates: [], mixedCandidates: [], summary: "No confluence candidate detected" };
 let scenarioContext = { available: false, activeTimeframe: null, scenarios: [], primaryScenario: null, bullishScenario: null, bearishScenario: null, breakoutScenario: null, breakdownScenario: null, waitScenario: null, summary: "Scenario context not available" };
 let reactionStudyContext = { available: false, activeTimeframe: null, studiedZones: [], strongestReaction: null, supportReactions: [], resistanceReactions: [], fvgReactions: [], channelReactions: [], watchAreaReaction: null, summary: "Reaction study not available" };
@@ -91,7 +93,9 @@ window.BtcDash.state = {
   srContexts,
   srDebugStats,
   fvgContexts,
+  fvgDebugStats,
   channelContexts,
+  channelDebugStats,
   get confluenceContext() { return confluenceContext; },
   set confluenceContext(value) { confluenceContext = value; },
   get scenarioContext() { return scenarioContext; },

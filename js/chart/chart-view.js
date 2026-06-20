@@ -190,7 +190,9 @@ function fvgLabel(timeframe, zone) {
 function deriveFvgVisualEndTime(fvg, candles, activeTimeframe) {
   const startIndex = candles.findIndex((candle) => candle.open_time >= (fvg.createdAtTime || fvg.startTime || 0));
   const after = startIndex >= 0 ? candles.slice(startIndex + 1) : [];
-  const filled = after.find((candle) => fvg.type === "bullish" ? candle.low <= fvg.lower : candle.high >= fvg.upper);
+  const lower = fvg.lower ?? fvg.zoneLow;
+  const upper = fvg.upper ?? fvg.zoneHigh;
+  const filled = after.find((candle) => fvg.type === "bullish" ? candle.low <= lower : candle.high >= upper);
   if (filled && fvg.status === "Filled") return filled.open_time;
   const last = candles.at(-1)?.open_time ?? fvg.endTime;
   const interval = candles.length > 1 ? candles.at(-1).open_time - candles.at(-2).open_time : BINANCE_INTERVAL_MS[activeTimeframe];
@@ -205,7 +207,7 @@ function buildFvgVisualItems(activeTimeframe) {
     const bucket = zone.type === "bearish" ? byType.bearish : byType.bullish;
     bucket.push({ zone, timeframe, isHtf, distance: zone.distancePct ?? 999 });
   };
-  (fvgContexts[activeTimeframe]?.activeFvgs || []).forEach((zone) => add(zone));
+  (fvgContexts[activeTimeframe]?.activeFvgs || fvgContexts[activeTimeframe]?.visibleFvgs || []).forEach((zone) => add(zone));
   if (activeWorkspace === "Daily + 4H Setup") add(fvgContexts["1D"]?.nearestFvg, "1D", true);
   if (activeWorkspace === "1H Timing") add(fvgContexts["4H"]?.nearestFvg, "4H", true);
   return [...byType.bullish.sort((a, b) => a.distance - b.distance).slice(0, 3), ...byType.bearish.sort((a, b) => a.distance - b.distance).slice(0, 3)]
@@ -217,7 +219,7 @@ function renderFvgZoneBoxes(activeTimeframe) {
   clearChartOverlayLayer("fvg");
   if (!activeLayers.FVG) return;
   buildFvgVisualItems(activeTimeframe).forEach(({ zone, timeframe, isHtf, startTime, endTime }) => {
-    addBoundedZoneBox({ type: "fvg", className: `fvg-zone-box ${zone.type === "bullish" ? "bullish" : "bearish"} ${zone.status === "Partially Filled" ? "partial" : ""} ${zone.status === "Filled" ? "filled" : ""} ${isHtf ? "htf" : ""}`, label: fvgLabel(timeframe, zone), lower: zone.lower, upper: zone.upper, startTime, endTime });
+    addBoundedZoneBox({ type: "fvg", className: `fvg-zone-box ${zone.type === "bullish" ? "bullish" : "bearish"} ${zone.status === "Partially Filled" ? "partial" : ""} ${zone.status === "Filled" ? "filled" : ""} ${isHtf ? "htf" : ""}`, label: fvgLabel(timeframe, zone), lower: zone.lower ?? zone.zoneLow, upper: zone.upper ?? zone.zoneHigh, startTime, endTime });
   });
 }
 

@@ -323,3 +323,34 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
   font-size: 0.82rem;
   line-height: 1.45;
 }
+
+.fvg-card,
+.channel-card {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 16px;
+  padding: 0.85rem;
+  background: rgba(15, 23, 42, 0.72);
+}
+.fvg-zone-chip,
+.fvg-midpoint-badge,
+.fvg-inverse-badge,
+.fvg-mitigated-badge,
+.channel-boundary-chip,
+.channel-break-badge,
+.channel-retest-badge,
+.channel-fit-badge {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 0.16rem 0.5rem;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  background: rgba(8, 47, 73, 0.35);
+  color: #bae6fd;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.fvg-inverse-badge,
+.channel-retest-badge { border-color: rgba(250, 204, 21, 0.35); color: #fde68a; background: rgba(113, 63, 18, 0.22); }
+.fvg-mitigated-badge,
+.channel-break-badge { border-color: rgba(248, 113, 113, 0.35); color: #fecaca; background: rgba(127, 29, 29, 0.2); }

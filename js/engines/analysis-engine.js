@@ -1208,3 +1208,27 @@ if (window.BtcDash.engines?.sr) {
   window.rebuildSrContexts = window.BtcDash.engines.sr.rebuildSrContexts;
   window.rebuildAllSrContexts = window.BtcDash.engines.sr.rebuildSrContexts;
 }
+
+if (window.BtcDash.engines?.fvg) {
+  Object.assign(window.BtcDash.analysis, {
+    createEmptyFvgContext: window.BtcDash.engines.fvg.createEmptyFvgContext,
+    scanFvgForTimeframe: window.BtcDash.engines.fvg.rebuildFvgForTimeframe,
+    buildFvgContext: window.BtcDash.engines.fvg.rebuildFvgForTimeframe,
+    rebuildAllFvgContexts: window.BtcDash.engines.fvg.rebuildFvgContexts,
+    rebuildFvgContexts: window.BtcDash.engines.fvg.rebuildFvgContexts
+  });
+  window.BtcDash.engines.rebuildFvgContexts = window.BtcDash.engines.fvg.rebuildFvgContexts;
+  window.rebuildFvgContexts = window.BtcDash.engines.fvg.rebuildFvgContexts;
+  window.rebuildAllFvgContexts = window.BtcDash.engines.fvg.rebuildFvgContexts;
+}
+if (window.BtcDash.engines?.channel) {
+  Object.assign(window.BtcDash.analysis, {
+    createEmptyChannelContext: window.BtcDash.engines.channel.createEmptyChannelContext,
+    buildChannelContext: window.BtcDash.engines.channel.rebuildChannelForTimeframe,
+    rebuildAllChannelContexts: window.BtcDash.engines.channel.rebuildChannelContexts,
+    rebuildChannelContexts: window.BtcDash.engines.channel.rebuildChannelContexts
+  });
+  window.BtcDash.engines.rebuildChannelContexts = window.BtcDash.engines.channel.rebuildChannelContexts;
+  window.rebuildChannelContexts = window.BtcDash.engines.channel.rebuildChannelContexts;
+  window.rebuildAllChannelContexts = window.BtcDash.engines.channel.rebuildChannelContexts;
+}
