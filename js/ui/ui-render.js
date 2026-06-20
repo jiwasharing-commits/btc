@@ -349,7 +349,7 @@ function renderDetail() {
       return `${grid([['Active TF Bias', context.bias],['Structure Status', context.status],['Last Swing High', fmtPrice(context.lastSwingHigh?.price)],['Last Swing Low', fmtPrice(context.lastSwingLow?.price)],['BOS / CHoCH', context.bosChoch?.status],['Sequence', formatStructureSequence(context)]], 'detail-grid six')}<div class="structure-note card">${context.summary}</div>${renderMtfStructureCards()}`;
     })(),
     'FVG': renderFvgTab(),
-    'S/R': renderSrTab(),
+    'S/R': window.BtcDash.ui.panels?.sr?.renderPanel?.() || renderSrTab(),
     'Channel': renderChannelTab(),
     'Confluence': renderConfluenceTab(),
     'Reaction Study': renderReactionStudyTab(),

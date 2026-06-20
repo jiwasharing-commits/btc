@@ -1189,3 +1189,22 @@ if (window.BtcDash.engines?.structure) {
   window.rebuildStructureForTimeframe = window.BtcDash.engines.structure.rebuildStructureForTimeframe;
   window.buildMarketStructureContext = window.BtcDash.engines.structure.rebuildStructureForTimeframe;
 }
+
+if (window.BtcDash.engines?.liquidity) {
+  window.BtcDash.engines.rebuildLiquidityContexts = window.BtcDash.engines.liquidity.rebuildLiquidityContexts;
+  window.rebuildLiquidityContexts = window.BtcDash.engines.liquidity.rebuildLiquidityContexts;
+}
+if (window.BtcDash.engines?.sr) {
+  Object.assign(window.BtcDash.analysis, {
+    createEmptySrContext: window.BtcDash.engines.sr.createEmptySrContext,
+    buildRawSrLevelsFromSwings: window.BtcDash.engines.sr.buildRawSrLevelsFromSwings,
+    clusterSrLevelsIntoZones: window.BtcDash.engines.sr.clusterSrLevels,
+    deriveSrZoneStatus: window.BtcDash.engines.sr.deriveSrZoneStatus,
+    buildSrContext: window.BtcDash.engines.sr.rebuildSrForTimeframe,
+    rebuildAllSrContexts: window.BtcDash.engines.sr.rebuildSrContexts,
+    rebuildSrContexts: window.BtcDash.engines.sr.rebuildSrContexts
+  });
+  window.BtcDash.engines.rebuildSrContexts = window.BtcDash.engines.sr.rebuildSrContexts;
+  window.rebuildSrContexts = window.BtcDash.engines.sr.rebuildSrContexts;
+  window.rebuildAllSrContexts = window.BtcDash.engines.sr.rebuildSrContexts;
+}

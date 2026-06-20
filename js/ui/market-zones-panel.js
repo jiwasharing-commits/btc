@@ -2,24 +2,9 @@
   window.BtcDash = window.BtcDash || {};
   window.BtcDash.ui = window.BtcDash.ui || {};
   window.BtcDash.ui.panels = window.BtcDash.ui.panels || {};
-
-  function buildPanelData(options = {}) {
-    const ctx = window.BtcDash.state?.marketZonesContext || {}; return { title: "Market Zones", rows: [{ label: "Upside", value: (ctx.upside || []).slice(0,3).map((x) => x.label).join(" · ") || "No upside watch" }, { label: "Downside", value: (ctx.downside || []).slice(0,3).map((x) => x.label).join(" · ") || "No downside watch" }] };
-  }
-
-  function renderEmptyState(container, message = window.BtcDash.config?.UI_PANEL_CONFIG?.emptyStateText || "No data available.") {
-    const html = `<div class="panel-empty-state">${message}</div>`;
-    if (container) container.innerHTML = html;
-    return html;
-  }
-
-  function renderPanel(container = null, options = {}) {
-    const data = buildPanelData(options);
-    if (!data?.rows?.length) return renderEmptyState(container);
-    const html = `<section class="compact-panel-card"><h3>${data.title}</h3><div class="compact-panel-grid">${data.rows.map((row) => `<div><span>${row.label}</span><strong>${row.value || "—"}</strong></div>`).join("")}</div></section>`;
-    if (container) container.innerHTML = html;
-    return html;
-  }
-
+  function price(v) { return window.BtcDash.ui.formatters?.formatPrice?.(v) || (v ? Number(v).toLocaleString() : "—"); }
+  function buildPanelData() { const state = window.BtcDash.state || {}; const rows = []; ["1W", "1D", "4H", "1H"].forEach((tf) => { rows.push(...(state.liquidityContexts?.[tf]?.marketZoneRows || []), ...(state.srContexts?.[tf]?.marketZoneRows || [])); }); const legacy = [...(state.marketZonesContext?.upside || []), ...(state.marketZonesContext?.downside || [])]; rows.push(...legacy); const seen = new Set(); return rows.filter((row) => !/broken|historical/i.test(row.status || "")).filter((row) => { const key = row.id || `${row.source}-${row.timeframe}-${Math.round(row.zoneLow || row.lower || 0)}-${Math.round(row.zoneHigh || row.upper || 0)}`; if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 10); }
+  function renderEmptyState(container, message = "No market-zone source rows available.") { const html = `<div class="panel-empty-state">${message}</div>`; if (container) container.innerHTML = html; return html; }
+  function renderPanel(container = null) { const rows = buildPanelData(); if (!rows.length) return renderEmptyState(container); const html = `<section class="compact-panel-card"><h3>Market Zone Source Rows</h3><p class="zone-reference-note">Pre-dedupe source rows from Liquidity and S/R. Canonical dedupe comes next.</p><div class="compact-panel-grid">${rows.map((row) => `<div><span><em class="zone-source-tag">${row.source || "Legacy"}</em> ${row.timeframe || ""}</span><strong>${row.label || row.type || "Reference Zone"}</strong><small>${price(row.zoneLow || row.lower)}–${price(row.zoneHigh || row.upper)} · ${row.status || "Reference"}</small></div>`).join("")}</div></section>`; if (container) container.innerHTML = html; return html; }
   window.BtcDash.ui.panels.marketZones = { renderPanel, buildPanelData, renderEmptyState };
 })();

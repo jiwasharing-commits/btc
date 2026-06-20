@@ -2,7 +2,10 @@ const marketData = { "1W": [], "1D": [], "4H": [], "1H": [] };
 const runningCandles = { "1W": null, "1D": null, "4H": null, "1H": null };
 const structureContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
 const structureDebugStats = { enabled: false, lastBuildAt: null, rawPivotCount: 0, internalSwingCount: 0, majorSwingCount: 0, displayedLabelCount: 0, rejectedRawPivotCount: 0, replacedSwingCount: 0, sweepCount: 0, bosCount: 0, chochCount: 0, warnings: [] };
+const liquidityContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
+const liquidityDebugStats = { enabled: false, lastBuildAt: null, rawEqualHighCount: 0, rawEqualLowCount: 0, buySidePoolCount: 0, sellSidePoolCount: 0, activePoolCount: 0, sweptPoolCount: 0, brokenPoolCount: 0, reclaimedPoolCount: 0, retestedPoolCount: 0, projectedPoolCount: 0, marketZoneRowCount: 0, warnings: [] };
 const srContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
+const srDebugStats = { enabled: false, lastBuildAt: null, rawLevelCount: 0, zoneClusterCount: 0, activeSupportCount: 0, activeResistanceCount: 0, brokenZoneCount: 0, flippedZoneCount: 0, sweptZoneCount: 0, historicalZoneCount: 0, marketZoneRowCount: 0, warnings: [] };
 let marketZonesContext = { upside: [], downside: [], nearestSupport: null, nearestResistance: null, activeTimeframe: null, summary: "" };
 const fvgContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
 const channelContexts = { "1W": null, "1D": null, "4H": null, "1H": null };
@@ -83,7 +86,10 @@ window.BtcDash.state = {
   runningCandles,
   structureContexts,
   structureDebugStats,
+  liquidityContexts,
+  liquidityDebugStats,
   srContexts,
+  srDebugStats,
   fvgContexts,
   channelContexts,
   get confluenceContext() { return confluenceContext; },

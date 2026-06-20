@@ -458,6 +458,18 @@
     return window.BtcDash.state?.structureContexts?.[timeframe] || createEmptyStructureContext(timeframe, "Structure context has not been built yet.");
   }
 
+
+  function getStructuralSourceSwings(timeframe, sourceSwingLayer = "major") {
+    const context = window.BtcDash.state?.structureContexts?.[timeframe];
+    if (!context?.available) return [];
+    let source = [];
+    if (sourceSwingLayer === "major") source = context.majorSwings?.length ? context.majorSwings : (context.analysisSwings || context.analysisLabels || []);
+    else source = context.internalSwings?.length ? context.internalSwings : (context.analysisSwings || context.analysisLabels || []);
+    return (source || [])
+      .filter((swing) => swing && (swing.type === "high" || swing.type === "low") && Number.isFinite(Number(swing.price)) && (swing.time != null) && Number.isFinite(Number(swing.index)) && swing.layer !== "rawPivot" && swing.structureType !== "rawPivot" && swing.isStructural !== false)
+      .sort((a, b) => Number(a.index) - Number(b.index));
+  }
+
   const api = {
     rebuildStructureContexts,
     rebuildStructureForTimeframe,
@@ -472,6 +484,7 @@
     deriveProtectedLevels,
     deriveStructureBias,
     getStructureContext,
+    getStructuralSourceSwings,
     rebuildAllStructureContexts: rebuildStructureContexts,
     buildMarketStructureContext: rebuildStructureForTimeframe,
     detectSwingPoints: detectRawPivots,

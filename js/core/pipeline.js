@@ -150,9 +150,23 @@
     }
   });
   registerPipelineStep({
+    name: "Liquidity",
+    available: () => typeof window.BtcDash.engines?.liquidity?.rebuildLiquidityContexts === "function",
+    run: () => {
+      window.BtcDash.engines.liquidity.rebuildLiquidityContexts({ reason: "pipeline" });
+      return { status: "success", message: "Liquidity V2 contexts rebuilt" };
+    }
+  });
+  registerPipelineStep({
     name: "S/R",
-    available: () => typeof resolveFunction("rebuildAllSrContexts") === "function",
-    run: () => runNamedAnalysisFunction("rebuildAllSrContexts")
+    available: () => typeof window.BtcDash.engines?.sr?.rebuildSrContexts === "function" || typeof resolveFunction("rebuildAllSrContexts") === "function",
+    run: () => {
+      if (typeof window.BtcDash.engines?.sr?.rebuildSrContexts === "function") {
+        window.BtcDash.engines.sr.rebuildSrContexts({ reason: "pipeline" });
+        return { status: "success", message: "S/R V2.1 contexts rebuilt" };
+      }
+      return runNamedAnalysisFunction("rebuildAllSrContexts");
+    }
   });
   registerPipelineStep({
     name: "FVG",

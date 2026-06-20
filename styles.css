@@ -288,3 +288,38 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
   color: #94a3b8;
   line-height: 1.4;
 }
+
+.liquidity-card,
+.sr-card {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 16px;
+  padding: 0.85rem;
+  background: rgba(15, 23, 42, 0.72);
+}
+.liquidity-pool-chip,
+.liquidity-sweep-badge,
+.sr-zone-chip,
+.sr-flip-badge,
+.sr-broken-badge,
+.zone-source-tag {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 0.16rem 0.5rem;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  background: rgba(8, 47, 73, 0.35);
+  color: #bae6fd;
+  font-size: 0.7rem;
+  font-style: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.liquidity-sweep-badge,
+.sr-flip-badge { border-color: rgba(250, 204, 21, 0.35); color: #fde68a; background: rgba(113, 63, 18, 0.22); }
+.sr-broken-badge { border-color: rgba(248, 113, 113, 0.35); color: #fecaca; background: rgba(127, 29, 29, 0.2); }
+.zone-reference-note {
+  margin: 0.25rem 0 0.75rem;
+  color: #94a3b8;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}

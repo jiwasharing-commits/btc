@@ -152,20 +152,22 @@ function buildSrVisualItems(timeframe) {
   const interval = candles.length > 1 ? candles.at(-1).open_time - candles.at(-2).open_time : BINANCE_INTERVAL_MS[timeframe];
   if (!sr?.available || !lastTime) return [];
   const normalize = (zone, kind) => {
-    const midpoint = zone.midpoint || ((zone.lower + zone.upper) / 2);
-    const visualPad = Math.max(midpoint * 0.0015, Math.abs(zone.upper - zone.lower) / 2);
+    const lower = zone.lower ?? zone.zoneLow ?? zone.centerPrice ?? zone.price;
+    const upper = zone.upper ?? zone.zoneHigh ?? zone.centerPrice ?? zone.price;
+    const midpoint = zone.midpoint || zone.centerPrice || ((lower + upper) / 2);
+    const visualPad = Math.max(midpoint * 0.0015, Math.abs(upper - lower) / 2);
     return {
       ...zone,
-      lower: zone.lower === zone.upper ? midpoint - visualPad : zone.lower,
-      upper: zone.lower === zone.upper ? midpoint + visualPad : zone.upper,
+      lower: lower === upper ? midpoint - visualPad : lower,
+      upper: lower === upper ? midpoint + visualPad : upper,
       kind,
-      startTime: zone.lastTime || zone.firstTime || candles[Math.max(0, candles.length - 36)].open_time,
+      startTime: zone.lastTime || zone.lastTouchTime || zone.firstTime || zone.firstSeenTime || candles[Math.max(0, candles.length - 36)].open_time,
       endTime: lastTime + interval * 8
     };
   };
   return [
-    ...(sr.supportZones || []).sort((a, b) => (a.distancePct ?? 999) - (b.distancePct ?? 999)).slice(0, 3).map((zone) => normalize(zone, "support")),
-    ...(sr.resistanceZones || []).sort((a, b) => (a.distancePct ?? 999) - (b.distancePct ?? 999)).slice(0, 3).map((zone) => normalize(zone, "resistance"))
+    ...(sr.activeSupports || sr.supportZones || []).sort((a, b) => (a.distancePct ?? 999) - (b.distancePct ?? 999)).slice(0, 3).map((zone) => normalize(zone, "support")),
+    ...(sr.activeResistances || sr.resistanceZones || []).sort((a, b) => (a.distancePct ?? 999) - (b.distancePct ?? 999)).slice(0, 3).map((zone) => normalize(zone, "resistance"))
   ];
 }
 
