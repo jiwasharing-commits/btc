@@ -1,0 +1,8 @@
+(function () {
+  window.BtcDash = window.BtcDash || {}; window.BtcDash.chart = window.BtcDash.chart || {}; window.BtcDash.chart.overlays = window.BtcDash.chart.overlays || {};
+  function isLayerEnabled(){const s=window.BtcDash.state;return Boolean(s?.chartRuntime?.layerState?.channel||s?.activeLayers?.Channel)}
+  function buildChannelOverlayItems(timeframe){const ctx=window.BtcDash.state?.channelContexts?.[timeframe], ch=ctx?.localChannel; if(!ctx?.available||!ch?.available||ch.status==="No Clear Channel")return[]; return [ch.upperZone,ch.midZone,ch.lowerZone].filter(Boolean).map(z=>({layer:"channel",timeframe,source:"Channel",sourceId:`${timeframe}-${z.boundaryType}`,type:z.boundaryType,label:`${timeframe} Channel ${z.boundaryType}`,zoneLow:z.zoneLow,zoneHigh:z.zoneHigh,price:z.centerPrice,startTime:ch.validFromTime,endTime:ch.projectionEndTime||ch.validToTime,drawPolicy:ch.drawPolicy||"show",score:ch.score,status:ch.status}));}
+  function clearChannelOverlay(){window.BtcDash.chart.overlays.zone?.clearZoneOverlayLayer?.("channel");window.BtcDash.chart.overlayRegistry?.clearLayer("channel")}
+  function renderChannelOverlay(timeframe){clearChannelOverlay(timeframe); if(!isLayerEnabled())return[]; return window.BtcDash.chart.overlays.zone?.renderZoneOverlayBatch(buildChannelOverlayItems(timeframe),{layer:"channel",timeframe,source:"Channel",className:"channel-zone-box"})||[];}
+  window.BtcDash.chart.overlays.channel={renderChannelOverlay,clearChannelOverlay,buildChannelOverlayItems};
+})();
