@@ -365,6 +365,7 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
   inset: 0;
   pointer-events: none;
   z-index: 5;
+  background: transparent;
   overflow: hidden;
 }
 .btc-chart-overlay-root [data-overlay-type] {

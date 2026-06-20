@@ -3,8 +3,9 @@
   window.BtcDash.chart = window.BtcDash.chart || {};
 
   function renderCandles(timeframe, options = {}) {
-    if (typeof window.BtcDash.chart?.renderTradingChart === "function" && options.delegate !== false) window.BtcDash.chart.renderTradingChart();
-    return getChartSeries();
+    if (typeof window.BtcDash.chart?.renderChart === "function" && options.delegate !== false && !options.skipChartRender) window.BtcDash.chart.renderChart(timeframe, { reason: options.reason || "candle-renderer", skipCandleDelegate: true });
+    else if (typeof window.BtcDash.chart?.renderTradingChart === "function" && options.delegate !== false) window.BtcDash.chart.renderTradingChart();
+    return { ...getChartSeries(), baseChart: window.BtcDash.chart?.debugBaseChart?.() || null };
   }
   function renderRunningCandlePreview(timeframe, options = {}) { return { timeframe, preview: window.BtcDash.state?.runningCandles?.[timeframe] || null, options }; }
   function clearRunningCandlePreview() { return true; }

@@ -48,6 +48,8 @@
   function renderStructureOverlay(timeframe = window.BtcDash.chart?.getActiveChartTimeframe?.()) {
     clearStructureOverlay(timeframe);
     if (!isLayerEnabled()) return [];
+    const baseStatus = window.BtcDash.chart.assertBaseChartReady?.() || { ready: false, reason: "base-chart-ready-guard-unavailable" };
+    if (!baseStatus.ready) { window.BtcDash.chart._lastStructureMarkerRender = { timeframe, markerCount: 0, markerStatus: { warning: "base-chart-not-ready", baseChartStatus: baseStatus }, lastRenderAt: new Date().toISOString() }; return []; }
     const activeTimeframe = window.BtcDash.chart?.getActiveChartTimeframe?.() || timeframe;
     const items = buildStructureOverlayItems(timeframe || activeTimeframe);
     const markers = items.map((item) => ({

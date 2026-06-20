@@ -1,11 +1,23 @@
 function toChartCandles(candles) {
   return candles.map((candle) => ({
     time: Math.floor(candle.open_time / 1000),
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close
-  }));
+    open: Number(candle.open),
+    high: Number(candle.high),
+    low: Number(candle.low),
+    close: Number(candle.close)
+  })).filter((candle) => Number.isFinite(candle.time) && [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite) && candle.high >= candle.low);
+}
+
+function getBaseCandleOptions() {
+  return {
+    upColor: "#22c55e",
+    downColor: "#ef4444",
+    borderUpColor: "#22c55e",
+    borderDownColor: "#ef4444",
+    wickUpColor: "#86efac",
+    wickDownColor: "#fca5a5",
+    priceLineVisible: false
+  };
 }
 
 function ensureChartRuntime() {
@@ -14,14 +26,61 @@ function ensureChartRuntime() {
   window.BtcDash.chart.runtime = window.BtcDash.chart.runtime || { chart: null, candleSeries: null, chartContainer: null, activeTimeframe: null, activeWorkspace: null, activeRange: null, chartId: null, lastChartRenderAt: null, lastCandleRenderAt: null };
   return window.BtcDash.chart.runtime;
 }
-function setActiveChartRuntime(runtime = {}) { const rt = ensureChartRuntime(); Object.assign(rt, runtime); return rt; }
+function setActiveChartRuntime(runtime = {}) {
+  const rt = ensureChartRuntime();
+  if (runtime.candleSeries === null && rt.candleSeries && runtime.renderSucceeded !== false) delete runtime.candleSeries;
+  Object.assign(rt, runtime);
+  return rt;
+}
 function getActiveChartRuntime() { return ensureChartRuntime(); }
 function getActiveChart() { return ensureChartRuntime().chart || tradingChart || null; }
 function getActiveCandleSeries() { return ensureChartRuntime().candleSeries || candleSeries || null; }
 function getActiveChartContainer() { return ensureChartRuntime().chartContainer || qs('#main-chart'); }
 function getActiveChartTimeframe() { return ensureChartRuntime().activeTimeframe || getActiveTimeframe(); }
 function refreshActiveChartBinding(reason = "manual") { return setActiveChartRuntime({ chart: tradingChart || null, candleSeries: candleSeries || null, chartContainer: qs('#main-chart'), activeTimeframe: getActiveTimeframe(), activeWorkspace, activeRange: rangeState[activeWorkspace] || null, chartId: ensureChartRuntime().chartId || `chart-${Date.now()}`, lastChartRenderAt: new Date().toISOString(), refreshReason: reason }); }
-function getChartBindingDiagnostics() { const rt = ensureChartRuntime(); const apiMode = window.BtcDash.chart.adapter?.detectChartApiMode?.(rt.chart) || { mode: "unknown", warnings: ["adapter unavailable"] }; const warnings = []; if (!rt.chart) warnings.push("missing-active-chart"); if (!rt.candleSeries) warnings.push("missing-candle-series"); if (!rt.chartContainer) warnings.push("missing-chart-container"); return { hasChart: Boolean(rt.chart), hasCandleSeries: Boolean(rt.candleSeries), hasContainer: Boolean(rt.chartContainer), activeTimeframe: rt.activeTimeframe, activeWorkspace: rt.activeWorkspace, chartId: rt.chartId, apiMode: apiMode.mode, layerState: getLayerState?.() || {}, warnings }; }
+function getChartBindingDiagnostics() { const rt = ensureChartRuntime(); const apiMode = window.BtcDash.chart.adapter?.detectChartApiMode?.(rt.chart) || { mode: "unknown", warnings: ["adapter unavailable"] }; const warnings = []; if (!rt.chart) warnings.push("missing-active-chart"); if (!rt.candleSeries) warnings.push("missing-candle-series"); if (!rt.chartContainer) warnings.push("missing-chart-container"); return { hasChart: Boolean(rt.chart), hasCandleSeries: Boolean(rt.candleSeries), hasContainer: Boolean(rt.chartContainer), activeTimeframe: rt.activeTimeframe, activeWorkspace: rt.activeWorkspace, chartId: rt.chartId, apiMode: apiMode.mode, libraryVersion: apiMode.libraryVersion, layerState: getLayerState?.() || {}, warnings }; }
+function assertBaseChartReady() {
+  const rt = ensureChartRuntime();
+  const hasChart = Boolean(rt.chart || tradingChart);
+  const hasCandleSeries = Boolean(rt.candleSeries || candleSeries);
+  const hasContainer = Boolean(rt.chartContainer || qs('#main-chart'));
+  const setDataSuccess = rt.lastSetDataStatus ? Boolean(rt.lastSetDataStatus.success) : Boolean(hasCandleSeries);
+  const reason = !hasChart ? "missing-chart" : !hasCandleSeries ? "missing-candle-series" : !hasContainer ? "missing-chart-container" : !setDataSuccess ? "set-data-failed" : "ready";
+  return { ready: hasChart && hasCandleSeries && hasContainer && setDataSuccess, hasChart, hasCandleSeries, hasContainer, setDataSuccess, reason };
+}
+function debugBaseChart() {
+  const timeframe = getActiveChartTimeframe();
+  const candles = marketData[timeframe] || [];
+  const formatted = toChartCandles(getDisplayCandlesForChart(timeframe, getActiveCandles()));
+  const rt = ensureChartRuntime();
+  const chart = getActiveChart();
+  const series = getActiveCandleSeries();
+  const api = window.BtcDash.chart.adapter?.detectChartApiMode?.(chart) || { mode: "unknown", warnings: ["adapter unavailable"] };
+  const warnings = [...(api.warnings || [])];
+  if (!chart) warnings.push("missing-chart");
+  if (!candles.length) warnings.push("missing-candles");
+  if (!series) warnings.push(rt.lastCandleCreateWarning || "series-create-failed");
+  if (rt.lastSetDataStatus && !rt.lastSetDataStatus.success) warnings.push(`set-data-failed:${rt.lastSetDataStatus.warning}`);
+  if (candles.length && !formatted.length) warnings.push("invalid-candle-format");
+  return {
+    activeTimeframe: timeframe,
+    activeWorkspace,
+    hasChart: Boolean(chart),
+    hasCandleSeries: Boolean(series),
+    hasChartContainer: Boolean(getActiveChartContainer()),
+    apiMode: api.mode,
+    libraryVersion: api.libraryVersion,
+    candleCount: candles.length,
+    formattedCandleCount: formatted.length,
+    firstCandle: formatted[0] || null,
+    lastCandle: formatted.at(-1) || null,
+    setDataSuccess: Boolean(rt.lastSetDataStatus?.success),
+    lastCandleRenderAt: rt.lastCandleRenderAt || null,
+    candleSeriesMethods: { hasSetData: typeof series?.setData === "function", hasSetMarkers: typeof series?.setMarkers === "function", hasPriceToCoordinate: typeof series?.priceToCoordinate === "function" },
+    chartMethods: { hasAddCandlestickSeries: typeof chart?.addCandlestickSeries === "function", hasAddLineSeries: typeof chart?.addLineSeries === "function", hasAddSeries: typeof chart?.addSeries === "function", hasRemoveSeries: typeof chart?.removeSeries === "function" },
+    warnings
+  };
+}
 
 function chart(title, timeframe, closedCandles, strip = []) {
   const allCount = marketData[timeframe]?.length ?? 0;
@@ -306,13 +365,16 @@ function clearMaOverlay() {
 }
 
 function renderMaOverlay(timeframe = getActiveChartTimeframe()) {
+  const baseStatus = assertBaseChartReady();
+  if (!baseStatus.ready) return { renderedCount: 0, reason: "base-chart-not-ready", baseChartStatus: baseStatus };
   clearMaOverlay();
   const chart = getActiveChart();
   if (!chart) return [];
   const colors = { 20: "#38bdf8", 50: "#facc15", 200: "#f472b6" };
   const rendered = buildMaOverlayItems(timeframe).map((item) => {
     const created = window.BtcDash.chart.adapter?.createLineSeriesSafe?.(chart, { color: colors[item.period] || "#94a3b8", lineWidth: item.period === 200 ? 2 : 1, priceLineVisible: false, lastValueVisible: true, title: item.label }) || {};
-    const series = created.series;
+    let series = created.series;
+    if (!series && typeof chart.addLineSeries === "function") series = chart.addLineSeries({ color: colors[item.period] || "#94a3b8", lineWidth: item.period === 200 ? 2 : 1, priceLineVisible: false, lastValueVisible: true, title: item.label });
     if (!series) return null;
     window.BtcDash.chart.adapter?.setSeriesDataSafe?.(series, item.data);
     window.BtcDash.chart._maSeries = [...(window.BtcDash.chart._maSeries || []), series];
@@ -348,6 +410,11 @@ function renderLayer(layer, timeframe = getActiveTimeframe(), options = {}) {
   const renderer = rendererMap[key];
   if (state?.chartRuntime?.layerState) state.chartRuntime.layerState[key] = true;
   if (activeLayers && getLegacyLayerKey(key) in activeLayers) activeLayers[getLegacyLayerKey(key)] = true;
+  const baseStatus = assertBaseChartReady();
+  if (!baseStatus.ready) {
+    lastLayerRenderStatus[key] = { layer: key, timeframe, enabled: true, renderedCount: 0, skippedCount: 1, reason: "base-chart-not-ready", baseChartStatus: baseStatus, warnings: [baseStatus.reason] };
+    return lastLayerRenderStatus[key];
+  }
   if (typeof renderer === "function") result = renderer(timeframe, options) || [];
   else warnings.push(`Renderer unavailable for ${key}`);
   const debugMap = { fvg: window.BtcDash.chart.overlays.fvg?.debugFvgOverlay, sr: window.BtcDash.chart.overlays.sr?.debugSrOverlay, liquidity: window.BtcDash.chart.overlays.liquidity?.debugLiquidityOverlay, channel: window.BtcDash.chart.overlays.channel?.debugChannelOverlay, structure: window.BtcDash.chart.overlays.structure?.debugStructureMarkers };
@@ -483,23 +550,30 @@ function renderTradingChart() {
     handleScale: { axisPressedMouseMove: true, mouseWheel: false, pinch: true }
   });
 
-  const candleCreated = window.BtcDash.chart.adapter?.createCandlestickSeriesSafe?.(tradingChart, {
-    upColor: "#22c55e",
-    downColor: "#ef4444",
-    borderUpColor: "#22c55e",
-    borderDownColor: "#ef4444",
-    wickUpColor: "#86efac",
-    wickDownColor: "#fca5a5",
-    priceLineVisible: false
-  }) || {};
+  const candleOptions = getBaseCandleOptions();
+  const formattedCandles = toChartCandles(displayCandles);
+  const candleCreated = window.BtcDash.chart.adapter?.createCandlestickSeriesSafe?.(tradingChart, candleOptions) || {};
   candleSeries = candleCreated.series;
-  if (!candleSeries) { container.innerHTML = `<div class="status-panel error">Failed to create candle series: ${candleCreated.warning || "series-api-unavailable"}</div>`; return; }
-  window.BtcDash.chart.adapter?.setSeriesDataSafe?.(candleSeries, toChartCandles(displayCandles));
-  setActiveChartRuntime({ chart: tradingChart, candleSeries, chartContainer: container, activeTimeframe: timeframe, activeWorkspace, activeRange: rangeState[activeWorkspace] || null, chartId: `chart-${Date.now()}`, lastChartRenderAt: new Date().toISOString(), lastCandleRenderAt: new Date().toISOString() });
+  if (!candleSeries && typeof tradingChart.addCandlestickSeries === "function") {
+    try { candleSeries = tradingChart.addCandlestickSeries(candleOptions); candleCreated.mode = "v4-legacy-fallback"; }
+    catch (error) { candleCreated.warning = error.message; }
+  }
+  if (!candleSeries) {
+    setActiveChartRuntime({ chart: tradingChart, candleSeries: null, chartContainer: container, activeTimeframe: timeframe, activeWorkspace, activeRange: rangeState[activeWorkspace] || null, renderSucceeded: false, lastCandleCreateWarning: candleCreated.warning || "series-create-failed" });
+    container.innerHTML = `<div class="status-panel error">Failed to create candle series: ${candleCreated.warning || "series-api-unavailable"}</div>`;
+    return;
+  }
+  const setDataStatus = window.BtcDash.chart.adapter?.setSeriesDataSafe?.(candleSeries, formattedCandles) || { success: false, dataCount: 0, warning: "adapter-unavailable" };
+  if (!setDataStatus.success) {
+    setActiveChartRuntime({ chart: tradingChart, candleSeries: null, chartContainer: container, activeTimeframe: timeframe, activeWorkspace, activeRange: rangeState[activeWorkspace] || null, renderSucceeded: false, lastSetDataStatus: setDataStatus });
+    container.innerHTML = `<div class="status-panel error">Failed to set candle data: ${setDataStatus.warning || "set-data-failed"}</div>`;
+    return;
+  }
+  setActiveChartRuntime({ chart: tradingChart, candleSeries, chartContainer: container, activeTimeframe: timeframe, activeWorkspace, activeRange: rangeState[activeWorkspace] || null, chartId: `chart-${Date.now()}`, lastChartRenderAt: new Date().toISOString(), lastCandleRenderAt: new Date().toISOString(), lastSetDataStatus: setDataStatus, lastCandleCreateStatus: candleCreated, renderSucceeded: true });
   addDummyPriceLines(closedCandles, running);
   addDummyMarkers(closedCandles, running, timeframe);
   tradingChart.timeScale().fitContent();
-  window.BtcDash.chart.markers?.reapplyActiveMarkers?.("candle-render");
+  window.BtcDash.chart.markers?.reapplyActiveMarkers?.("after-candle-render");
   requestAnimationFrame(() => {
     renderActiveLayers(timeframe, { reason: "chart-render" });
   });
@@ -629,6 +703,8 @@ window.BtcDash.chart = {
   setActiveChartRuntime,
   refreshActiveChartBinding,
   getChartBindingDiagnostics,
+  assertBaseChartReady,
+  debugBaseChart,
   debugRealRendering,
   debugOverlayCoordinates,
   setLayerState,

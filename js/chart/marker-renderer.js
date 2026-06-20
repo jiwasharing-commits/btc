@@ -19,8 +19,14 @@
   }
   function getMergedMarkers() { return Object.values(runtime().markerLayers || {}).flat().sort((a, b) => Number(a.time) - Number(b.time)); }
   function applyMergedMarkers(reason = "manual") {
-    const series = window.BtcDash.chart.getActiveCandleSeries?.() || window.BtcDash.state?.candleSeries || null;
     const merged = getMergedMarkers();
+    const baseStatus = window.BtcDash.chart.assertBaseChartReady?.() || { ready: false, reason: "base-chart-ready-guard-unavailable" };
+    if (!baseStatus.ready) {
+      const status = { success: false, mode: "guarded", markerCount: merged.length, warning: "base-chart-not-ready", baseChartStatus: baseStatus };
+      runtime().lastMarkerApplyStatus = status;
+      return status;
+    }
+    const series = window.BtcDash.chart.getActiveCandleSeries?.() || window.BtcDash.state?.candleSeries || null;
     const status = window.BtcDash.chart.adapter?.createOrUpdateSeriesMarkersSafe?.(series, merged, "merged", { reason }) || { success: false, mode: "unavailable", markerCount: merged.length, warning: "adapter-unavailable" };
     runtime().lastMarkerApplyStatus = status;
     return status;

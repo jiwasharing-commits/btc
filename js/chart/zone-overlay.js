@@ -148,6 +148,8 @@
 
   function renderZoneOverlayBatch(rows = [], options = {}) {
     lastZoneRenderStats = { coordinateResolvedCount: 0, coordinateFailedCount: 0, skipReasons: [] };
+    const baseStatus = window.BtcDash.chart.assertBaseChartReady?.() || { ready: false, reason: "base-chart-ready-guard-unavailable" };
+    if (!baseStatus.ready) { lastZoneRenderStats.coordinateFailedCount = rows.length; lastZoneRenderStats.skipReasons.push("base-chart-not-ready", baseStatus.reason); return []; }
     const max = window.BtcDash.config?.PERFORMANCE_CONFIG?.overlay?.maxZonesPerLayer || 24;
     return rows.filter((row) => (row?.drawPolicy || options.drawPolicy || "show") !== "hide" && (row?.drawPolicy || options.drawPolicy || "show") !== "summaryOnly").slice(0, max).map((row) => renderZoneOverlay(row, options)).filter(Boolean);
   }
