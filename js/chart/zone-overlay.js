@@ -12,9 +12,17 @@
     const lower = Number(row.lower ?? row.zoneLow ?? midpoint * 0.999);
     const upper = Number(row.upper ?? row.zoneHigh ?? midpoint * 1.001);
     const pad = Math.max(midpoint * 0.001, Math.abs(upper - lower) / 2);
+    const tf = options.timeframe || row.timeframe || window.BtcDash.utils?.getActiveTimeframe?.() || "1W";
+    const candles = window.BtcDash.state?.marketData?.[tf] || [];
+    const interval = candles.length > 1 ? Number(candles.at(-1).open_time) - Number(candles.at(-2).open_time) : 3600000;
+    const fallbackEnd = Number(candles.at(-1)?.open_time || Date.now());
+    const fallbackStart = Number(candles[Math.max(0, candles.length - 48)]?.open_time || fallbackEnd - interval * 24);
+    let start = row.startTime || row.firstTime || row.createdAtTime || options.startTime || fallbackStart;
+    let end = row.endTime || row.lastTime || options.endTime || fallbackEnd + interval * 8;
+    if (Number(end) <= Number(start)) end = Number(start) + interval * 8;
     const normalized = {
       layer: options.layer || row.layer || row.zoneType || "zone",
-      timeframe: options.timeframe || row.timeframe || window.BtcDash.utils?.getActiveTimeframe?.() || "1W",
+      timeframe: tf,
       workspace: options.workspace || window.BtcDash.state?.activeWorkspace,
       source: row.source || options.source || "zone",
       sourceId: row.id || row.sourceId || null,
@@ -23,8 +31,8 @@
       zoneLow: lower === upper ? midpoint - pad : Math.min(lower, upper),
       zoneHigh: lower === upper ? midpoint + pad : Math.max(lower, upper),
       price: midpoint,
-      startTime: row.startTime || row.firstTime || row.createdAtTime || options.startTime || null,
-      endTime: row.endTime || row.lastTime || options.endTime || null,
+      startTime: start,
+      endTime: end,
       drawPolicy: row.drawPolicy || options.drawPolicy || "show",
       meta: { raw: row }
     };

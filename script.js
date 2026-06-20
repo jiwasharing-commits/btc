@@ -55,11 +55,12 @@
     qs('.layer-control')?.addEventListener('click', (event) => {
       const button = event.target.closest('[data-layer]');
       if (!button) return;
-      const layer = button.dataset.layer;
-      const enabled = !activeLayers[layer];
-      window.BtcDash.chart?.setLayerState?.(layer, enabled);
-      activeLayers[layer] = enabled;
-      button.classList.toggle('active', activeLayers[layer]);
+      const layer = window.BtcDash.chart?.normalizeLayerKey?.(button.dataset.layer) || button.dataset.layer;
+      const enabled = !window.BtcDash.state?.chartRuntime?.layerState?.[layer];
+      const status = window.BtcDash.chart?.setLayerState?.(layer, enabled, { reason: "layer-toggle" });
+      button.dataset.layer = layer;
+      button.classList.toggle('active', Boolean(enabled));
+      button.title = status?.reason || "";
       window.BtcDash?.pipeline?.renderOnly?.("layer-toggle");
     });
   }

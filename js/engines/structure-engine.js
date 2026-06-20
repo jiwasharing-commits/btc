@@ -362,10 +362,34 @@
     };
   }
 
-  function buildDisplaySwings(analysisSwings, timeframe) {
+  function buildCleanDisplaySwings(analysisSwings, timeframe, options = {}) {
     const { tf, root } = getConfig(timeframe);
-    const limit = tf.displayMaxLabels || root.displayRules?.maxLabelsFallback || 12;
-    return (analysisSwings || []).slice(-limit).map((swing) => ({ ...swing }));
+    const limit = options.limit || tf.displayMaxLabels || root.displayRules?.maxLabelsFallback || 12;
+    const swings = (analysisSwings || []).filter((swing) => swing?.isStructural !== false && swing?.label && Number.isFinite(Number(swing.price)) && swing.time != null);
+    const minGap = Math.max(1, Math.round((tf.minBarGap || 1) * (timeframe === "4H" ? 0.9 : timeframe === "1H" ? 0.75 : 0.5)));
+    const importantLabels = new Set(["HH", "HL", "LH", "LL"]);
+    const ranked = swings.map((swing, index) => ({
+      swing,
+      index,
+      score: (importantLabels.has(swing.label) ? 5 : 1) + Math.min(4, Math.abs(Number(swing.moveFromPreviousPct || 0))) + index / Math.max(1, swings.length)
+    })).sort((a, b) => b.score - a.score);
+    const selected = [];
+    ranked.forEach(({ swing }) => {
+      if (selected.length >= limit) return;
+      const tooClose = selected.some((item) => Math.abs(Number(item.index ?? 0) - Number(swing.index ?? 0)) < minGap && item.type === swing.type);
+      if (!tooClose) selected.push({ ...swing, timeframe });
+    });
+    if (selected.length < Math.min(limit, swings.length)) {
+      swings.slice().reverse().forEach((swing) => {
+        if (selected.length >= limit) return;
+        if (!selected.some((item) => item.id === swing.id)) selected.push({ ...swing, timeframe });
+      });
+    }
+    return selected.sort((a, b) => Number(a.index || 0) - Number(b.index || 0));
+  }
+
+  function buildDisplaySwings(analysisSwings, timeframe) {
+    return buildCleanDisplaySwings(analysisSwings, timeframe);
   }
 
   function rebuildStructureForTimeframe(timeframe, options = {}) {
@@ -417,7 +441,7 @@
         bosChoch,
         sweepStatus,
         sequence: primary.map((swing) => swing.label).filter(Boolean),
-        debugStats: { ...promoted.debugStats, rawPivotCount: rawPivots.length, internalSwingCount: promoted.internalSwings.length, majorSwingCount: promoted.majorSwings.length, displayedLabelCount: displaySwings.length, reason: options.reason || null },
+        debugStats: { ...promoted.debugStats, rawPivotCount: rawPivots.length, internalSwingCount: promoted.internalSwings.length, majorSwingCount: promoted.majorSwings.length, displayedLabelCount: displaySwings.length, analysisSwingCount: primary.length, displaySwingCount: displaySwings.length, hiddenDisplaySwingCount: Math.max(0, primary.length - displaySwings.length), displayFilterReason: "Clean display swings prioritize valid HH/HL/LH/LL, spacing, move size, and recency.", reason: options.reason || null },
         summary: bias.summary,
         note: "Planning context only. Raw Pivot is not structure."
       };
@@ -483,6 +507,7 @@
     deriveSweepStatus,
     deriveProtectedLevels,
     deriveStructureBias,
+    buildCleanDisplaySwings,
     getStructureContext,
     getStructuralSourceSwings,
     rebuildAllStructureContexts: rebuildStructureContexts,

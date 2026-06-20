@@ -114,6 +114,13 @@
     return snapshotOverlayRegistry().filter((overlay) => disabled.includes(overlay.layer));
   }
 
+  function getOverlayCountByLayer(layer) { return getOverlaysByLayer(layer).length; }
+  function findOverlayByLayer(layer) { return getOverlaysByLayer(layer); }
+  function getRegistryDebugSnapshot() {
+    const stats = getOverlayStats();
+    return { ...stats, duplicateKeys: getDuplicateOverlayKeys(), layerOffResidue: getLayerOffResidue(window.BtcDash.state?.chartRuntime?.layerState || {}) };
+  }
+
   function getOverlayStats() {
     const overlays = snapshotOverlayRegistry();
     return overlays.reduce((stats, overlay) => {
@@ -124,5 +131,5 @@
     }, { total: 0, byLayer: {}, byTimeframe: {}, warnings: getOverlayRegistry().warnings.slice() });
   }
 
-  window.BtcDash.chart.overlayRegistry = { createOverlayRegistry, getOverlayRegistry, registerOverlay, removeOverlay, clearLayer, clearTimeframe, clearWorkspace, clearAllOverlays, hasOverlay, buildOverlayKey, getOverlayStats, snapshotOverlayRegistry, getOverlaySnapshot, getOverlaysByLayer, getOverlaysByTimeframe, getDuplicateOverlayKeys, getLayerOffResidue };
+  window.BtcDash.chart.overlayRegistry = { createOverlayRegistry, getOverlayRegistry, registerOverlay, removeOverlay, clearLayer, clearTimeframe, clearWorkspace, clearAllOverlays, hasOverlay, buildOverlayKey, getOverlayStats, snapshotOverlayRegistry, getOverlaySnapshot, getOverlaysByLayer, getOverlaysByTimeframe, getDuplicateOverlayKeys, getLayerOffResidue, getOverlayCountByLayer, getRegistryDebugSnapshot, findOverlayByLayer };
 })();

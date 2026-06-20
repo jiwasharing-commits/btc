@@ -38,7 +38,9 @@ function renderBinanceDebug() {
 
 function renderLayerControls() {
   document.querySelectorAll('.layer-control [data-layer]').forEach((button) => {
-    button.classList.toggle('active', Boolean(activeLayers[button.dataset.layer]));
+    const key = window.BtcDash.chart?.normalizeLayerKey?.(button.dataset.layer) || button.dataset.layer;
+    button.dataset.layer = key;
+    button.classList.toggle('active', Boolean(window.BtcDash.state?.chartRuntime?.layerState?.[key]));
   });
 }
 

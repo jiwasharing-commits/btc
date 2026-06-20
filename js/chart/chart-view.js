@@ -30,6 +30,7 @@ function chart(title, timeframe, closedCandles, strip = []) {
 
 function clearTradingChart() {
   clearChartOverlays();
+  clearMaOverlay();
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
@@ -267,6 +268,84 @@ function clearLayerMarkers(layer) {
   candleSeries.setMarkers(existing);
 }
 
+function normalizeLayerKey(layer) {
+  const key = String(layer || "").trim();
+  const map = { MA: "ma", ma: "ma", Structure: "structure", structure: "structure", FVG: "fvg", fvg: "fvg", "S/R": "sr", SR: "sr", sr: "sr", supportResistance: "sr", "EQH/EQL": "liquidity", eqhEql: "liquidity", liquidity: "liquidity", Channel: "channel", channel: "channel", Confluence: "confluence", confluence: "confluence", "Scenario Levels": "scenario", scenario: "scenario", scenarioLevels: "scenario" };
+  return map[key] || key.toLowerCase();
+}
+
+function getLegacyLayerKey(layer) {
+  const map = { ma: "MA", structure: "Structure", fvg: "FVG", sr: "S/R", liquidity: "EQH/EQL", channel: "Channel", confluence: "Confluence", scenario: "Scenario Levels" };
+  return map[normalizeLayerKey(layer)] || layer;
+}
+
+function buildMaOverlayItems(timeframe = getActiveTimeframe()) {
+  const candles = (marketData[timeframe] || []).filter((c) => c && c.isRunning !== true && c.isClosed !== false && c.isFinal !== false && c.x !== false);
+  return [20, 50, 200].filter((period) => candles.length >= period).map((period) => {
+    const data = candles.map((c, index) => {
+      if (index + 1 < period) return null;
+      const windowRows = candles.slice(index + 1 - period, index + 1);
+      const value = windowRows.reduce((sum, row) => sum + Number(row.close || 0), 0) / period;
+      return { time: Math.floor(Number(c.open_time || new Date(c.time).getTime()) / 1000), value };
+    }).filter(Boolean);
+    return { period, data, label: `MA ${period}` };
+  });
+}
+
+function clearMaOverlay() {
+  const list = window.BtcDash.chart._maSeries || [];
+  list.forEach((series) => { try { tradingChart?.removeSeries?.(series); } catch (_) {} });
+  window.BtcDash.chart._maSeries = [];
+  window.BtcDash.chart.overlayRegistry?.clearLayer?.("ma");
+}
+
+function renderMaOverlay(timeframe = getActiveTimeframe()) {
+  clearMaOverlay();
+  if (!tradingChart || !candleSeries) return [];
+  const colors = { 20: "#38bdf8", 50: "#facc15", 200: "#f472b6" };
+  const rendered = buildMaOverlayItems(timeframe).map((item) => {
+    const series = tradingChart.addLineSeries({ color: colors[item.period] || "#94a3b8", lineWidth: item.period === 200 ? 2 : 1, priceLineVisible: false, lastValueVisible: true, title: item.label });
+    series.setData(item.data);
+    window.BtcDash.chart._maSeries = [...(window.BtcDash.chart._maSeries || []), series];
+    return window.BtcDash.chart.overlayRegistry?.registerOverlay?.({ layer: "ma", timeframe, source: "ma", sourceId: item.label, type: "line-series", chartObject: { remove: () => tradingChart?.removeSeries?.(series) }, drawPolicy: "show", meta: { period: item.period, points: item.data.length } });
+  }).filter(Boolean);
+  return rendered;
+}
+
+let lastLayerRenderStatus = {};
+function countRendered(result) { return Array.isArray(result) ? result.length : Number(result?.renderedCount || 0); }
+function clearLayer(layer, timeframe = getActiveTimeframe(), options = {}) {
+  const key = normalizeLayerKey(layer);
+  if (key === "ma") clearMaOverlay(timeframe);
+  else if (key === "structure") window.BtcDash.chart.overlays.structure?.clearStructureOverlay?.(timeframe);
+  else if (key === "fvg") window.BtcDash.chart.overlays.fvg?.clearFvgOverlay?.(timeframe);
+  else if (key === "sr") window.BtcDash.chart.overlays.sr?.clearSrOverlay?.(timeframe);
+  else if (key === "liquidity") window.BtcDash.chart.overlays.liquidity?.clearLiquidityOverlay?.(timeframe);
+  else if (key === "channel") window.BtcDash.chart.overlays.channel?.clearChannelOverlay?.(timeframe);
+  else if (key === "confluence") window.BtcDash.chart.overlays.confluence?.clearConfluenceOverlay?.(timeframe);
+  else if (key === "scenario") window.BtcDash.chart.overlays.scenario?.clearScenarioOverlay?.(timeframe);
+  else clearChartOverlayLayer(key);
+  lastLayerRenderStatus[key] = { layer: key, timeframe, enabled: false, renderedCount: 0, skippedCount: 0, reason: options.reason || "clear", warnings: [] };
+  return lastLayerRenderStatus[key];
+}
+
+function renderLayer(layer, timeframe = getActiveTimeframe(), options = {}) {
+  const key = normalizeLayerKey(layer);
+  const state = window.BtcDash.state;
+  const warnings = [];
+  let result = [];
+  const rendererMap = { ma: renderMaOverlay, structure: window.BtcDash.chart.overlays.structure?.renderStructureOverlay, fvg: window.BtcDash.chart.overlays.fvg?.renderFvgOverlay, sr: window.BtcDash.chart.overlays.sr?.renderSrOverlay, liquidity: window.BtcDash.chart.overlays.liquidity?.renderLiquidityOverlay, channel: window.BtcDash.chart.overlays.channel?.renderChannelOverlay, confluence: window.BtcDash.chart.overlays.confluence?.renderConfluenceOverlay, scenario: window.BtcDash.chart.overlays.scenario?.renderScenarioOverlay };
+  const renderer = rendererMap[key];
+  if (state?.chartRuntime?.layerState) state.chartRuntime.layerState[key] = true;
+  if (activeLayers && getLegacyLayerKey(key) in activeLayers) activeLayers[getLegacyLayerKey(key)] = true;
+  if (typeof renderer === "function") result = renderer(timeframe, options) || [];
+  else warnings.push(`Renderer unavailable for ${key}`);
+  const debugMap = { fvg: window.BtcDash.chart.overlays.fvg?.debugFvgOverlay, sr: window.BtcDash.chart.overlays.sr?.debugSrOverlay, liquidity: window.BtcDash.chart.overlays.liquidity?.debugLiquidityOverlay, channel: window.BtcDash.chart.overlays.channel?.debugChannelOverlay, structure: window.BtcDash.chart.overlays.structure?.debugStructureMarkers };
+  const extra = typeof debugMap[key] === "function" ? debugMap[key](timeframe) : {};
+  lastLayerRenderStatus[key] = { ...extra, layer: key, timeframe, enabled: true, renderedCount: countRendered(result), skippedCount: warnings.length ? 1 : (extra.skippedCount || 0), reason: warnings[0] || (countRendered(result) ? "rendered" : (extra.skipReasons?.[0] || `No visible ${key} for timeframe`)), warnings };
+  return lastLayerRenderStatus[key];
+}
+
 function channelSeriesPoint(line, time) {
   const value = projectLineAtTime(line, time);
   return Number.isFinite(value) ? { time: Math.floor(time / 1000), value } : null;
@@ -403,37 +482,38 @@ function clearChartOverlays() {
   channelSeries = [];
 }
 
-function renderActiveLayers(timeframe = getActiveTimeframe()) {
-  const overlays = window.BtcDash.chart.overlays || {};
-  overlays.structure?.renderStructureOverlay?.(timeframe);
-  overlays.sr?.renderSrOverlay?.(timeframe);
-  overlays.fvg?.renderFvgOverlay?.(timeframe);
-  overlays.liquidity?.renderLiquidityOverlay?.(timeframe);
-  overlays.channel?.renderChannelOverlay?.(timeframe);
-  overlays.confluence?.renderConfluenceOverlay?.(timeframe);
-  overlays.scenario?.renderScenarioOverlay?.(timeframe);
-  return window.BtcDash.chart.overlayRegistry?.getOverlayStats?.();
+function renderActiveLayers(timeframe = getActiveTimeframe(), options = {}) {
+  const state = window.BtcDash.state?.chartRuntime?.layerState || {};
+  return Object.entries(state).filter(([, enabled]) => enabled).map(([layer]) => renderLayer(layer, timeframe, options));
 }
 
 const layerNameMap = { MA: "ma", Structure: "structure", "S/R": "sr", FVG: "fvg", "EQH/EQL": "liquidity", Channel: "channel", Confluence: "confluence", "Scenario Levels": "scenario" };
 const reverseLayerNameMap = Object.fromEntries(Object.entries(layerNameMap).map(([legacy, canonical]) => [canonical, legacy]));
 
-function setLayerState(layer, enabled) {
-  const canonical = layerNameMap[layer] || layer;
-  const legacy = reverseLayerNameMap[canonical] || layer;
+function setLayerState(layer, enabled, options = {}) {
+  const canonical = normalizeLayerKey(layer);
+  const legacy = getLegacyLayerKey(canonical);
+  const timeframe = options.timeframe || getActiveTimeframe();
   if (window.BtcDash.state?.chartRuntime?.layerState) window.BtcDash.state.chartRuntime.layerState[canonical] = Boolean(enabled);
   if (activeLayers && legacy in activeLayers) activeLayers[legacy] = Boolean(enabled);
-  if (!enabled) {
-    window.BtcDash.chart.overlayRegistry?.clearLayer?.(canonical);
-    clearChartOverlayLayer(canonical);
-  } else {
-    renderActiveLayers(getActiveTimeframe());
-  }
-  return getLayerState();
+  return enabled ? (clearLayer(canonical, timeframe, { reason: "pre-render-clear" }), renderLayer(canonical, timeframe, options)) : clearLayer(canonical, timeframe, options);
 }
 
 function getLayerState() {
   return { ...(window.BtcDash.state?.chartRuntime?.layerState || {}) };
+}
+
+function debugLayerState() {
+  const layerState = getLayerState();
+  const overlayCountsByLayer = Object.fromEntries(Object.keys(layerState).map((layer) => [layer, window.BtcDash.chart.overlayRegistry?.getOverlayCountByLayer?.(layer) || 0]));
+  return { activeTimeframe: getActiveTimeframe(), layerState, overlayCountsByLayer, markerStats: window.BtcDash.chart.markers?.getMarkerStats?.() || null, lastLayerRenderStatus };
+}
+
+function debugLayerRender(layer, timeframe = getActiveTimeframe()) {
+  const key = normalizeLayerKey(layer);
+  const enabled = Boolean(window.BtcDash.state?.chartRuntime?.layerState?.[key]);
+  if (!enabled) return { layer: key, timeframe, enabled: false, renderedCount: 0, skippedCount: 0, reason: "Layer is off", warnings: [] };
+  return renderLayer(key, timeframe, { reason: "debug-layer-render" });
 }
 
 function syncLayerControlsToState() {
@@ -465,11 +545,21 @@ window.BtcDash.chart = {
   rerenderActiveChart,
   clearChartOverlays,
   renderActiveLayers,
+  normalizeLayerKey,
+  renderLayer,
+  clearLayer,
+  debugLayerState,
+  debugLayerRender,
+  renderMaOverlay,
+  clearMaOverlay,
+  buildMaOverlayItems,
   setLayerState,
   getLayerState,
   applyLayerMarkers,
   clearLayerMarkers,
   syncLayerControlsToState
 };
+window.BtcDash.chart.overlays = window.BtcDash.chart.overlays || {};
+window.BtcDash.chart.overlays.ma = { renderMaOverlay, clearMaOverlay, buildMaOverlayItems };
 window.BtcDash.renderChart = renderChart;
 window.renderChart = renderChart;

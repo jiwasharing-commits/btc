@@ -47,5 +47,6 @@
   }
 
   function getMarkerState() { return { byLayer: { ...markerState.byLayer } }; }
-  window.BtcDash.chart.markers = { renderMarkers, clearMarkers, clearAllMarkers, normalizeMarker, getMarkerState };
+  function getMarkerStats() { const byLayer = Object.fromEntries(Object.entries(markerState.byLayer).map(([layer, rows]) => [layer, rows.length])); return { total: Object.values(byLayer).reduce((sum, count) => sum + count, 0), byLayer }; }
+  window.BtcDash.chart.markers = { renderMarkers, clearMarkers, clearAllMarkers, normalizeMarker, getMarkerState, getMarkerStats };
 })();

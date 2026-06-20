@@ -62,7 +62,7 @@
     const layerEnabled = isLayerEnabled();
     const registryCount = window.BtcDash.chart.overlayRegistry?.getOverlaysByLayer?.("structure")?.length || 0;
     const markerCount = window.BtcDash.chart.markers?.getMarkerState?.()?.byLayer?.structure?.length || 0;
-    return { timeframe, displaySwings: displaySwings.length, markerCount, layerEnabled, registryCount, lastRenderAt: window.BtcDash.chart._lastStructureMarkerRender?.lastRenderAt || null };
+    return { timeframe, layerEnabled, contextAvailable: Boolean(context?.available), displaySwingsCount: (context?.displaySwings || []).length, displayLabelsCount: (context?.displayLabels || []).length, labelsCount: (context?.labels || []).length, displaySwings: displaySwings.length, markerCount, registryCount, lastRenderAt: window.BtcDash.chart._lastStructureMarkerRender?.lastRenderAt || null, warnings: markerCount || !layerEnabled ? [] : ["No structure markers rendered for active layer."] };
   }
 
   window.BtcDash.chart.debugStructureMarkers = debugStructureMarkers;
