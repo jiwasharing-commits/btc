@@ -8,6 +8,21 @@ function toChartCandles(candles) {
   }));
 }
 
+function ensureChartRuntime() {
+  window.BtcDash = window.BtcDash || {};
+  window.BtcDash.chart = window.BtcDash.chart || {};
+  window.BtcDash.chart.runtime = window.BtcDash.chart.runtime || { chart: null, candleSeries: null, chartContainer: null, activeTimeframe: null, activeWorkspace: null, activeRange: null, chartId: null, lastChartRenderAt: null, lastCandleRenderAt: null };
+  return window.BtcDash.chart.runtime;
+}
+function setActiveChartRuntime(runtime = {}) { const rt = ensureChartRuntime(); Object.assign(rt, runtime); return rt; }
+function getActiveChartRuntime() { return ensureChartRuntime(); }
+function getActiveChart() { return ensureChartRuntime().chart || tradingChart || null; }
+function getActiveCandleSeries() { return ensureChartRuntime().candleSeries || candleSeries || null; }
+function getActiveChartContainer() { return ensureChartRuntime().chartContainer || qs('#main-chart'); }
+function getActiveChartTimeframe() { return ensureChartRuntime().activeTimeframe || getActiveTimeframe(); }
+function refreshActiveChartBinding(reason = "manual") { return setActiveChartRuntime({ chart: tradingChart || null, candleSeries: candleSeries || null, chartContainer: qs('#main-chart'), activeTimeframe: getActiveTimeframe(), activeWorkspace, activeRange: rangeState[activeWorkspace] || null, chartId: ensureChartRuntime().chartId || `chart-${Date.now()}`, lastChartRenderAt: new Date().toISOString(), refreshReason: reason }); }
+function getChartBindingDiagnostics() { const rt = ensureChartRuntime(); const apiMode = window.BtcDash.chart.adapter?.detectChartApiMode?.(rt.chart) || { mode: "unknown", warnings: ["adapter unavailable"] }; const warnings = []; if (!rt.chart) warnings.push("missing-active-chart"); if (!rt.candleSeries) warnings.push("missing-candle-series"); if (!rt.chartContainer) warnings.push("missing-chart-container"); return { hasChart: Boolean(rt.chart), hasCandleSeries: Boolean(rt.candleSeries), hasContainer: Boolean(rt.chartContainer), activeTimeframe: rt.activeTimeframe, activeWorkspace: rt.activeWorkspace, chartId: rt.chartId, apiMode: apiMode.mode, layerState: getLayerState?.() || {}, warnings }; }
+
 function chart(title, timeframe, closedCandles, strip = []) {
   const allCount = marketData[timeframe]?.length ?? 0;
   const lastClosed = marketData[timeframe]?.at(-1);
@@ -41,6 +56,7 @@ function clearTradingChart() {
   }
   candleSeries = null;
   channelSeries = [];
+  if (window.BtcDash.state?.chartRuntime) window.BtcDash.state.chartRuntime.lastClearAction = { action: "clearChartOverlays", at: new Date().toISOString() };
 }
 
 function addDummyPriceLines(closedCandles, running) {
@@ -94,16 +110,17 @@ function addScenarioLevelPriceLines() {
 }
 
 function getChartOverlayLayer() {
-  return qs('#chart-overlay-layer');
+  return qs('#chart-overlay-layer') || window.BtcDash.chart.overlays?.zone?.getOverlayRoot?.();
 }
 
 function clearChartOverlayLayer(type = null) {
   if (type) window.BtcDash.chart?.overlayRegistry?.clearLayer?.(type);
   else window.BtcDash.chart?.overlayRegistry?.clearAllOverlays?.();
-  const layer = getChartOverlayLayer();
-  if (!layer) return;
   const selector = type ? `[data-overlay-type="${type}"]` : '[data-overlay-type]';
-  layer.querySelectorAll(selector).forEach((node) => node.remove());
+  const layer = getChartOverlayLayer();
+  if (layer) layer.querySelectorAll(selector).forEach((node) => node.remove());
+  const root = document.querySelector('#main-chart .btc-chart-overlay-root');
+  if (root && root !== layer) root.querySelectorAll(selector).forEach((node) => node.remove());
 }
 
 function addBoundedZoneBox({ type, className, label, lower, upper, startTime, endTime, overlayKey = null }) {
@@ -245,27 +262,15 @@ function addDummyMarkers(closedCandles, running, timeframe) {
   if (running && closedCandles.length && running.open_time > closedCandles.at(-1).open_time) {
     markers.push({ time: Math.floor(running.open_time / 1000), position: "aboveBar", color: "#facc15", shape: "circle", text: `Running ${timeframe === "1W" ? "W" : timeframe}` });
   }
-  candleSeries.setMarkers(markers);
+  window.BtcDash.chart.markers?.renderMarkers?.("base", timeframe, markers);
 }
 
 function applyLayerMarkers(layer, markers = []) {
-  if (!candleSeries) return [];
-  const normalized = (markers || []).slice(0, window.BtcDash.config?.PERFORMANCE_CONFIG?.overlay?.maxMarkersPerLayer || 80).map((marker) => ({
-    time: typeof marker.time === "number" && marker.time > 10000000000 ? Math.floor(marker.time / 1000) : marker.time,
-    position: marker.position || (marker.type === "low" ? "belowBar" : "aboveBar"),
-    color: marker.color || (marker.type === "low" ? "#facc15" : "#38bdf8"),
-    shape: marker.shape || (marker.type === "low" ? "arrowUp" : "arrowDown"),
-    text: marker.text || marker.label || ""
-  })).filter((marker) => marker.time && marker.text);
-  const existing = Object.entries(window.BtcDash.chart?.markers?.getMarkerState?.()?.byLayer || {}).flatMap(([key, rows]) => key === layer ? [] : rows || []).map((m) => ({ time: m.chartTime || m.time, position: m.position, color: m.color, shape: m.shape, text: m.text || m.label || "" }));
-  candleSeries.setMarkers([...existing, ...normalized]);
-  return normalized;
+  return window.BtcDash.chart.markers?.renderMarkers?.(normalizeLayerKey(layer), getActiveChartTimeframe(), markers)?.markers || [];
 }
 
 function clearLayerMarkers(layer) {
-  if (!candleSeries) return;
-  const existing = Object.entries(window.BtcDash.chart?.markers?.getMarkerState?.()?.byLayer || {}).flatMap(([key, rows]) => key === layer ? [] : rows || []).map((m) => ({ time: m.chartTime || m.time, position: m.position, color: m.color, shape: m.shape, text: m.text || m.label || "" }));
-  candleSeries.setMarkers(existing);
+  return window.BtcDash.chart.markers?.clearMarkers?.(normalizeLayerKey(layer));
 }
 
 function normalizeLayerKey(layer) {
@@ -293,24 +298,29 @@ function buildMaOverlayItems(timeframe = getActiveTimeframe()) {
 }
 
 function clearMaOverlay() {
+  const chart = getActiveChart();
   const list = window.BtcDash.chart._maSeries || [];
-  list.forEach((series) => { try { tradingChart?.removeSeries?.(series); } catch (_) {} });
+  list.forEach((series) => window.BtcDash.chart.adapter?.removeSeriesSafe?.(chart, series));
   window.BtcDash.chart._maSeries = [];
   window.BtcDash.chart.overlayRegistry?.clearLayer?.("ma");
 }
 
-function renderMaOverlay(timeframe = getActiveTimeframe()) {
+function renderMaOverlay(timeframe = getActiveChartTimeframe()) {
   clearMaOverlay();
-  if (!tradingChart || !candleSeries) return [];
+  const chart = getActiveChart();
+  if (!chart) return [];
   const colors = { 20: "#38bdf8", 50: "#facc15", 200: "#f472b6" };
   const rendered = buildMaOverlayItems(timeframe).map((item) => {
-    const series = tradingChart.addLineSeries({ color: colors[item.period] || "#94a3b8", lineWidth: item.period === 200 ? 2 : 1, priceLineVisible: false, lastValueVisible: true, title: item.label });
-    series.setData(item.data);
+    const created = window.BtcDash.chart.adapter?.createLineSeriesSafe?.(chart, { color: colors[item.period] || "#94a3b8", lineWidth: item.period === 200 ? 2 : 1, priceLineVisible: false, lastValueVisible: true, title: item.label }) || {};
+    const series = created.series;
+    if (!series) return null;
+    window.BtcDash.chart.adapter?.setSeriesDataSafe?.(series, item.data);
     window.BtcDash.chart._maSeries = [...(window.BtcDash.chart._maSeries || []), series];
-    return window.BtcDash.chart.overlayRegistry?.registerOverlay?.({ layer: "ma", timeframe, source: "ma", sourceId: item.label, type: "line-series", chartObject: { remove: () => tradingChart?.removeSeries?.(series) }, drawPolicy: "show", meta: { period: item.period, points: item.data.length } });
+    return window.BtcDash.chart.overlayRegistry?.registerOverlay?.({ layer: "ma", timeframe, source: "MA", sourceId: item.label, type: "line-series", chartObject: { remove: () => window.BtcDash.chart.adapter?.removeSeriesSafe?.(chart, series) }, drawPolicy: "show", meta: { period: item.period, points: item.data.length, mode: created.mode, warning: created.warning } });
   }).filter(Boolean);
   return rendered;
 }
+function getMaDebugState() { return { seriesCount: (window.BtcDash.chart._maSeries || []).length, overlayCount: window.BtcDash.chart.overlayRegistry?.getOverlayCountByLayer?.("ma") || 0, apiMode: window.BtcDash.chart.adapter?.detectChartApiMode?.(getActiveChart())?.mode || "unknown" }; }
 
 let lastLayerRenderStatus = {};
 function countRendered(result) { return Array.isArray(result) ? result.length : Number(result?.renderedCount || 0); }
@@ -342,8 +352,58 @@ function renderLayer(layer, timeframe = getActiveTimeframe(), options = {}) {
   else warnings.push(`Renderer unavailable for ${key}`);
   const debugMap = { fvg: window.BtcDash.chart.overlays.fvg?.debugFvgOverlay, sr: window.BtcDash.chart.overlays.sr?.debugSrOverlay, liquidity: window.BtcDash.chart.overlays.liquidity?.debugLiquidityOverlay, channel: window.BtcDash.chart.overlays.channel?.debugChannelOverlay, structure: window.BtcDash.chart.overlays.structure?.debugStructureMarkers };
   const extra = typeof debugMap[key] === "function" ? debugMap[key](timeframe) : {};
-  lastLayerRenderStatus[key] = { ...extra, layer: key, timeframe, enabled: true, renderedCount: countRendered(result), skippedCount: warnings.length ? 1 : (extra.skippedCount || 0), reason: warnings[0] || (countRendered(result) ? "rendered" : (extra.skipReasons?.[0] || `No visible ${key} for timeframe`)), warnings };
+  const binding = getChartBindingDiagnostics();
+  const zoneStats = window.BtcDash.chart.overlays?.zone?.getLastZoneRenderStats?.() || {};
+  const registryCountAfter = window.BtcDash.chart.overlayRegistry?.getOverlayCountByLayer?.(key) || 0;
+  lastLayerRenderStatus[key] = {
+    ...extra,
+    layer: key,
+    requestedTimeframe: timeframe,
+    timeframe,
+    activeTimeframe: getActiveChartTimeframe(),
+    chartBindingValid: Boolean(binding.hasChart && binding.hasCandleSeries),
+    apiMode: binding.apiMode,
+    enabled: true,
+    renderedCount: countRendered(result),
+    skippedCount: warnings.length ? 1 : (extra.skippedCount || 0),
+    coordinateFailedCount: zoneStats.coordinateFailedCount || extra.coordinateFailedCount || 0,
+    registryCountAfter,
+    reason: warnings[0] || (countRendered(result) ? "rendered" : (extra.skipReasons?.[0] || zoneStats.skipReasons?.[0] || `No visible ${key} for timeframe`)),
+    warnings: [...warnings, ...(binding.warnings || [])]
+  };
   return lastLayerRenderStatus[key];
+}
+
+
+function debugOverlayCoordinates(layer, timeframe = getActiveChartTimeframe()) {
+  const key = normalizeLayerKey(layer);
+  const builders = {
+    fvg: window.BtcDash.chart.overlays.fvg?.buildFvgOverlayItems,
+    sr: window.BtcDash.chart.overlays.sr?.buildSrOverlayItems,
+    liquidity: window.BtcDash.chart.overlays.liquidity?.buildLiquidityOverlayItems,
+    channel: window.BtcDash.chart.overlays.channel?.buildChannelOverlayItems
+  };
+  const rows = typeof builders[key] === "function" ? builders[key](timeframe) : [];
+  const sample = rows[0] || null;
+  return { layer: key, timeframe, candidateCount: rows.length, sample: sample ? window.BtcDash.chart.overlays.zone?.resolveZoneCoordinates?.(sample, timeframe, { layer: key }) : null, reason: sample ? undefined : "no-zone-sample" };
+}
+
+function debugRealRendering() {
+  const state = window.BtcDash.state;
+  const activeTimeframe = getActiveChartTimeframe();
+  return {
+    chartBinding: getChartBindingDiagnostics(),
+    apiMode: window.BtcDash.chart.adapter?.detectChartApiMode?.(getActiveChart()) || { mode: "unknown" },
+    activeTimeframe,
+    layerState: getLayerState(),
+    overlayRegistry: window.BtcDash.chart.overlayRegistry?.getRegistryDebugSnapshot?.() || null,
+    markerStats: window.BtcDash.chart.markers?.getMarkerStats?.() || null,
+    maDebug: getMaDebugState(),
+    lastLayerRenderStatus,
+    lastClearAction: state?.chartRuntime?.lastClearAction || null,
+    lastRenderAction: state?.chartRuntime?.lastRenderAction || null,
+    coordinateDiagnosticsSample: debugOverlayCoordinates("sr", activeTimeframe)
+  };
 }
 
 function channelSeriesPoint(line, time) {
@@ -355,8 +415,10 @@ function addChannelLine(line, startTime, endTime, color, lineWidth, title) {
   const start = channelSeriesPoint(line, startTime);
   const end = channelSeriesPoint(line, endTime);
   if (!start || !end) return;
-  const series = tradingChart.addLineSeries({ color, lineWidth, priceLineVisible: false, lastValueVisible: false, title });
-  series.setData([start, end]);
+  const created = window.BtcDash.chart.adapter?.createLineSeriesSafe?.(getActiveChart(), { color, lineWidth, priceLineVisible: false, lastValueVisible: false, title }) || {};
+  const series = created.series;
+  if (!series) return;
+  window.BtcDash.chart.adapter?.setSeriesDataSafe?.(series, [start, end]);
   channelSeries.push(series);
   window.BtcDash.chart?.overlayRegistry?.registerOverlay?.({
     layer: "channel",
@@ -368,7 +430,7 @@ function addChannelLine(line, startTime, endTime, color, lineWidth, title) {
     price: start.value,
     startTime,
     endTime,
-    chartObject: { remove: () => tradingChart?.removeSeries?.(series) }
+    chartObject: { remove: () => window.BtcDash.chart.adapter?.removeSeriesSafe?.(getActiveChart(), series) }
   });
 }
 
@@ -421,7 +483,7 @@ function renderTradingChart() {
     handleScale: { axisPressedMouseMove: true, mouseWheel: false, pinch: true }
   });
 
-  candleSeries = tradingChart.addCandlestickSeries({
+  const candleCreated = window.BtcDash.chart.adapter?.createCandlestickSeriesSafe?.(tradingChart, {
     upColor: "#22c55e",
     downColor: "#ef4444",
     borderUpColor: "#22c55e",
@@ -429,23 +491,24 @@ function renderTradingChart() {
     wickUpColor: "#86efac",
     wickDownColor: "#fca5a5",
     priceLineVisible: false
-  });
-  candleSeries.setData(toChartCandles(displayCandles));
+  }) || {};
+  candleSeries = candleCreated.series;
+  if (!candleSeries) { container.innerHTML = `<div class="status-panel error">Failed to create candle series: ${candleCreated.warning || "series-api-unavailable"}</div>`; return; }
+  window.BtcDash.chart.adapter?.setSeriesDataSafe?.(candleSeries, toChartCandles(displayCandles));
+  setActiveChartRuntime({ chart: tradingChart, candleSeries, chartContainer: container, activeTimeframe: timeframe, activeWorkspace, activeRange: rangeState[activeWorkspace] || null, chartId: `chart-${Date.now()}`, lastChartRenderAt: new Date().toISOString(), lastCandleRenderAt: new Date().toISOString() });
   addDummyPriceLines(closedCandles, running);
   addDummyMarkers(closedCandles, running, timeframe);
-  addChannelOverlays(closedCandles, timeframe);
   tradingChart.timeScale().fitContent();
+  window.BtcDash.chart.markers?.reapplyActiveMarkers?.("candle-render");
   requestAnimationFrame(() => {
-    renderFvgZoneBoxes(timeframe);
-    renderSrZoneSegments(timeframe);
+    renderActiveLayers(timeframe, { reason: "chart-render" });
   });
 
   resizeObserver = new ResizeObserver(() => {
     if (!tradingChart || !container.clientWidth || !container.clientHeight) return;
     tradingChart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
     requestAnimationFrame(() => {
-      renderFvgZoneBoxes(timeframe);
-      renderSrZoneSegments(timeframe);
+      renderActiveLayers(timeframe, { reason: "resize" });
     });
   });
   resizeObserver.observe(container);
@@ -466,7 +529,9 @@ function renderChart(timeframe = getActiveTimeframe(), options = {}) {
     state.chartRuntime.activeRange = rangeState[activeWorkspace] || null;
     state.chartRuntime.lastRenderAt = new Date().toISOString();
     state.chartRuntime.renderCount += 1;
+    state.chartRuntime.lastRenderAction = { action: "renderChart", timeframe, at: new Date().toISOString() };
   }
+  refreshActiveChartBinding("renderChart");
   return { timeframe, overlays: window.BtcDash.chart?.overlayRegistry?.getOverlayStats?.() || null, options };
 }
 
@@ -478,6 +543,8 @@ function clearChartOverlays() {
   window.BtcDash.chart?.overlayRegistry?.clearAllOverlays?.();
   const layer = getChartOverlayLayer();
   if (layer) layer.querySelectorAll('[data-overlay-type]').forEach((node) => node.remove());
+  const root = document.querySelector('#main-chart .btc-chart-overlay-root');
+  if (root && root !== layer) root.querySelectorAll('[data-overlay-type]').forEach((node) => node.remove());
   channelSeries.forEach((series) => { try { tradingChart?.removeSeries?.(series); } catch (error) { /* ignored */ } });
   channelSeries = [];
 }
@@ -553,6 +620,17 @@ window.BtcDash.chart = {
   renderMaOverlay,
   clearMaOverlay,
   buildMaOverlayItems,
+  getMaDebugState,
+  getActiveChart,
+  getActiveCandleSeries,
+  getActiveChartContainer,
+  getActiveChartTimeframe,
+  getActiveChartRuntime,
+  setActiveChartRuntime,
+  refreshActiveChartBinding,
+  getChartBindingDiagnostics,
+  debugRealRendering,
+  debugOverlayCoordinates,
   setLayerState,
   getLayerState,
   applyLayerMarkers,
@@ -560,6 +638,6 @@ window.BtcDash.chart = {
   syncLayerControlsToState
 };
 window.BtcDash.chart.overlays = window.BtcDash.chart.overlays || {};
-window.BtcDash.chart.overlays.ma = { renderMaOverlay, clearMaOverlay, buildMaOverlayItems };
+window.BtcDash.chart.overlays.ma = window.BtcDash.chart.overlays.ma || { renderMaOverlay, clearMaOverlay, buildMaOverlayItems, getMaDebugState };
 window.BtcDash.renderChart = renderChart;
 window.renderChart = renderChart;

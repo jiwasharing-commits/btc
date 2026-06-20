@@ -45,24 +45,61 @@
     window.BtcDash.chart.clearChartOverlayLayer?.("structure");
   }
 
-  function renderStructureOverlay(timeframe) {
+  function renderStructureOverlay(timeframe = window.BtcDash.chart?.getActiveChartTimeframe?.()) {
     clearStructureOverlay(timeframe);
     if (!isLayerEnabled()) return [];
-    const items = buildStructureOverlayItems(timeframe);
-    const markers = items.map((item) => ({ time: item.startTime, price: item.price, text: item.label, shape: item.type === "low" ? "arrowUp" : "arrowDown", position: item.type === "low" ? "belowBar" : "aboveBar", color: item.type === "low" ? "#facc15" : "#38bdf8", type: item.type, label: item.label }));
-    window.BtcDash.chart.markers?.renderMarkers?.(timeframe, { structure: markers });
-    const registered = items.map((item) => window.BtcDash.chart.overlayRegistry?.registerOverlay({ ...item, key: `${item.layer}|${item.timeframe}|${item.sourceId}|${item.type}|${item.price}` })).filter(Boolean);
-    window.BtcDash.chart._lastStructureMarkerRender = { timeframe, markerCount: markers.length, lastRenderAt: new Date().toISOString() };
+    const activeTimeframe = window.BtcDash.chart?.getActiveChartTimeframe?.() || timeframe;
+    const items = buildStructureOverlayItems(timeframe || activeTimeframe);
+    const markers = items.map((item) => ({
+      time: item.startTime,
+      price: item.price,
+      text: item.label,
+      shape: item.type === "low" || item.label === "HL" || item.label === "LL" ? "arrowUp" : "arrowDown",
+      position: item.type === "low" || item.label === "HL" || item.label === "LL" ? "belowBar" : "aboveBar",
+      color: item.type === "low" || item.label === "HL" || item.label === "LL" ? "#facc15" : "#38bdf8",
+      type: item.type,
+      label: item.label
+    }));
+    const markerStatus = window.BtcDash.chart.markers?.renderMarkers?.("structure", timeframe || activeTimeframe, markers);
+    const registered = items.map((item) => window.BtcDash.chart.overlayRegistry?.registerOverlay({ ...item, key: `${item.layer}|${item.timeframe}|${item.sourceId}|${item.type}|${item.price}`, meta: { ...item.meta, markerStatus } })).filter(Boolean);
+    window.BtcDash.chart._lastStructureMarkerRender = { timeframe: timeframe || activeTimeframe, markerCount: markers.length, markerStatus, lastRenderAt: new Date().toISOString() };
     return registered;
   }
 
-  function debugStructureMarkers(timeframe) {
-    const context = window.BtcDash.state?.structureContexts?.[timeframe];
+  function debugStructureMarkers(timeframe = window.BtcDash.chart?.getActiveChartTimeframe?.()) {
+    const activeTimeframe = window.BtcDash.chart?.getActiveChartTimeframe?.() || timeframe;
+    const context = window.BtcDash.state?.structureContexts?.[timeframe || activeTimeframe];
     const displaySwings = getDisplaySwings(context);
     const layerEnabled = isLayerEnabled();
     const registryCount = window.BtcDash.chart.overlayRegistry?.getOverlaysByLayer?.("structure")?.length || 0;
-    const markerCount = window.BtcDash.chart.markers?.getMarkerState?.()?.byLayer?.structure?.length || 0;
-    return { timeframe, layerEnabled, contextAvailable: Boolean(context?.available), displaySwingsCount: (context?.displaySwings || []).length, displayLabelsCount: (context?.displayLabels || []).length, labelsCount: (context?.labels || []).length, displaySwings: displaySwings.length, markerCount, registryCount, lastRenderAt: window.BtcDash.chart._lastStructureMarkerRender?.lastRenderAt || null, warnings: markerCount || !layerEnabled ? [] : ["No structure markers rendered for active layer."] };
+    const markerStats = window.BtcDash.chart.markers?.getMarkerStats?.() || {};
+    const markerLayer = markerStats.byLayer?.structure || 0;
+    const binding = window.BtcDash.chart?.getChartBindingDiagnostics?.() || {};
+    const apiMode = window.BtcDash.chart?.adapter?.detectChartApiMode?.(window.BtcDash.chart?.getActiveChart?.()) || { mode: "unknown" };
+    const last = window.BtcDash.chart._lastStructureMarkerRender || {};
+    const warnings = [];
+    if (!binding.hasChart || !binding.hasCandleSeries) warnings.push("missing-active-chart-binding");
+    if (layerEnabled && !markerLayer) warnings.push("No structure markers rendered for active layer.");
+    return {
+      timeframe: timeframe || activeTimeframe,
+      activeTimeframe,
+      layerEnabled,
+      chartBindingValid: Boolean(binding.hasChart && binding.hasCandleSeries),
+      apiMode: apiMode.mode,
+      contextAvailable: Boolean(context?.available),
+      displaySwingsCount: (context?.displaySwings || []).length,
+      displayLabelsCount: (context?.displayLabels || []).length,
+      labelsCount: (context?.labels || []).length,
+      displaySwings: displaySwings.length,
+      markerBuiltCount: last.markerCount || 0,
+      markerApplyMode: last.markerStatus?.applyStatus?.mode || last.markerStatus?.mode || markerStats.applyMode || null,
+      markerApplySuccess: last.markerStatus?.applyStatus?.success ?? markerStats.applySuccess ?? null,
+      markerCount: markerLayer,
+      markerStats,
+      registryCount,
+      lastRenderAt: last.lastRenderAt || null,
+      warnings
+    };
   }
 
   window.BtcDash.chart.debugStructureMarkers = debugStructureMarkers;

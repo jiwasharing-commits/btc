@@ -35,6 +35,10 @@ const chartRuntime = {
   activeRange: null,
   layerState: { ma: false, structure: false, sr: false, fvg: false, liquidity: false, channel: false, confluence: false, scenario: false },
   overlayRegistry: null,
+  markerLayers: {},
+  markerPluginHandles: {},
+  lastClearAction: null,
+  lastRenderAction: null,
   lastRenderAt: null,
   renderCount: 0,
   warnings: []

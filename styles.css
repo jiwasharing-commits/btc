@@ -354,3 +354,35 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
 .channel-retest-badge { border-color: rgba(250, 204, 21, 0.35); color: #fde68a; background: rgba(113, 63, 18, 0.22); }
 .fvg-mitigated-badge,
 .channel-break-badge { border-color: rgba(248, 113, 113, 0.35); color: #fecaca; background: rgba(127, 29, 29, 0.2); }
+
+/* Real-browser chart overlay root for DOM-rendered zones. */
+.trading-chart {
+  position: relative;
+  overflow: hidden;
+}
+.btc-chart-overlay-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  overflow: hidden;
+}
+.btc-chart-overlay-root [data-overlay-type] {
+  position: absolute;
+  pointer-events: none;
+  min-width: 2px;
+  min-height: 2px;
+  box-sizing: border-box;
+}
+.btc-chart-overlay-root [data-overlay-type] span {
+  position: absolute;
+  right: 4px;
+  top: 2px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e2e8f0;
+  font-size: 0.66rem;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
