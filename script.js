@@ -1,10 +1,18 @@
 (function () {
-  function setWorkspace(name) {
-    activeWorkspace = name;
+  function rebuildActiveAnalysis(reason) {
+    if (window.BtcDash?.pipeline?.rebuildForTimeframe) {
+      window.BtcDash.pipeline.rebuildForTimeframe(getActiveTimeframe(), { reason, render: false });
+      return;
+    }
     marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
     rebuildConfluenceContext(getActiveTimeframe());
     rebuildScenarioContext(getActiveTimeframe());
     rebuildReactionStudyContext(getActiveTimeframe());
+  }
+
+  function setWorkspace(name) {
+    activeWorkspace = name;
+    rebuildActiveAnalysis("workspace-change");
     renderTabs('.workspace-tabs', workspaces, activeWorkspace, 'setWorkspace');
     renderSummary();
     renderWorkspace();
@@ -19,10 +27,7 @@
 
   function setRange(range) {
     rangeState[activeWorkspace] = range;
-    marketZonesContext = buildMarketZonesContext(getActiveTimeframe());
-    rebuildConfluenceContext(getActiveTimeframe());
-    rebuildScenarioContext(getActiveTimeframe());
-    rebuildReactionStudyContext(getActiveTimeframe());
+    rebuildActiveAnalysis("range-change");
     renderSummary();
     renderWorkspace();
     renderDetail();
@@ -90,7 +95,7 @@
   window.setRange = setRange;
 
   window.BtcDash = window.BtcDash || {};
-  window.BtcDash.app = { initDashboard, bindEventHandlers, setWorkspace, setDetail, setRange, ensureBinanceDebugModal };
+  window.BtcDash.app = { initDashboard, bindEventHandlers, setWorkspace, setDetail, setRange, ensureBinanceDebugModal, rebuildActiveAnalysis };
 
   document.addEventListener('DOMContentLoaded', initDashboard);
 })();
