@@ -1,0 +1,11 @@
+(function () {
+  window.BtcDash = window.BtcDash || {}; window.BtcDash.chart = window.BtcDash.chart || {}; window.BtcDash.chart.overlays = window.BtcDash.chart.overlays || {};
+  const bad = new Set(["Broken Zone", "Historical Reaction Zone"]);
+  function isLayerEnabled() { const state = window.BtcDash.state; return Boolean(state?.chartRuntime?.layerState?.sr || state?.activeLayers?.["S/R"]); }
+  function getSrSource(timeframe){const c=window.BtcDash.state?.srContexts?.[timeframe]; const visible=c?.visibleZones||[]; const active=[...(c?.activeSupports||c?.supportZones||[]),...(c?.activeResistances||c?.resistanceZones||[])]; return {context:c,rows:visible.length?visible:active,visibleCount:visible.length,supportCount:(c?.activeSupports||[]).length,resistanceCount:(c?.activeResistances||[]).length};}
+  function buildSrOverlayItems(timeframe) { const src=getSrSource(timeframe); if(!src.context?.available)return[]; return src.rows.filter((zone)=>!bad.has(zone.status)).slice(0,6).map((zone)=>({...zone,layer:"sr",timeframe,source:"S/R",sourceId:zone.id,type:zone.activeType||zone.type,label:zone.label||`${timeframe} ${zone.activeType||zone.type||"S/R"}`,zoneLow:zone.zoneLow??zone.lower,zoneHigh:zone.zoneHigh??zone.upper,price:zone.centerPrice??zone.price,startTime:zone.firstSeenTime||zone.firstTime,endTime:zone.lastTouchTime||zone.lastTime,drawPolicy:zone.drawPolicy||"show"})); }
+  function clearSrOverlay(){window.BtcDash.chart.overlays.zone?.clearZoneOverlayLayer?.("sr")}
+  function renderSrOverlay(timeframe){clearSrOverlay(timeframe); if(!isLayerEnabled())return[]; return window.BtcDash.chart.overlays.zone?.renderZoneOverlayBatch(buildSrOverlayItems(timeframe),{layer:"sr",timeframe,source:"S/R",className:"sr-zone-box"})||[];}
+  function debugSrOverlay(timeframe){const src=getSrSource(timeframe), items=buildSrOverlayItems(timeframe); return {layer:"sr",timeframe,contextAvailable:Boolean(src.context?.available),visibleZones:src.visibleCount,activeSupports:src.supportCount,activeResistances:src.resistanceCount,renderedCount:window.BtcDash.chart.overlayRegistry?.getOverlayCountByLayer?.("sr")||0,skippedCount:Math.max(0,src.rows.length-items.length),skipReasons:items.length?[]:["No visible S/R for timeframe"]};}
+  window.BtcDash.chart.overlays.sr={renderSrOverlay,clearSrOverlay,buildSrOverlayItems,debugSrOverlay};
+})();
