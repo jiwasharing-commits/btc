@@ -16,6 +16,39 @@ function formatDistance(value) {
   return Number.isFinite(Number(value)) ? `${Number(value).toFixed(2)}%` : "—";
 }
 
+
+function detectTimeUnit(value) {
+  if (value instanceof Date) return "date-string";
+  if (typeof value === "string" && value.trim() && !Number.isNaN(Number(value))) return detectTimeUnit(Number(value));
+  if (typeof value === "string" && Number.isFinite(Date.parse(value))) return "date-string";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "unknown";
+  if (numeric > 10000000000) return "milliseconds";
+  if (numeric > 1000000000) return "seconds";
+  return "unknown";
+}
+
+function normalizeChartTime(value) {
+  if (value instanceof Date) return Math.floor(value.getTime() / 1000);
+  if (typeof value === "string" && value.trim() && !Number.isNaN(Number(value))) return normalizeChartTime(Number(value));
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  if (numeric > 10000000000) return Math.floor(numeric / 1000);
+  if (numeric > 1000000000) return Math.floor(numeric);
+  return null;
+}
+
+function normalizeVisibleRange(range = {}) {
+  const from = normalizeChartTime(range.from);
+  const to = normalizeChartTime(range.to);
+  const units = [detectTimeUnit(range.from), detectTimeUnit(range.to)].filter((unit) => unit !== "unknown");
+  return { from, to, valid: Number.isFinite(from) && Number.isFinite(to) && to >= from, originalUnit: units.length ? [...new Set(units)].join("+") : "unknown", normalizedUnit: "seconds" };
+}
+
 function getVisibleCandles(timeframe, range) {
   const candles = marketData[timeframe] ?? [];
   if (!candles.length || range === "Full") return candles;
@@ -42,6 +75,9 @@ window.BtcDash.utils = {
   mergeCandles,
   formatZone,
   formatDistance,
+  detectTimeUnit,
+  normalizeChartTime,
+  normalizeVisibleRange,
   getVisibleCandles,
   getActiveConfig,
   getActiveTimeframe,

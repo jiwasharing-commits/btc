@@ -14,7 +14,7 @@
   }
   function normalizeLayer(layer) { return window.BtcDash.chart.normalizeLayerKey?.(layer) || String(layer || "other").toLowerCase(); }
   function normalizeMarker(marker, layer, timeframe) {
-    const chartTime = typeof marker.time === "number" && marker.time > 10000000000 ? Math.floor(marker.time / 1000) : marker.time;
+    const chartTime = window.BtcDash.utils?.normalizeChartTime?.(marker.time ?? marker.startTime ?? marker.open_time) ?? marker.time;
     return { ...marker, time: chartTime, chartTime, layer, timeframe, key: `${layer}|${timeframe}|${chartTime}|${marker.text || marker.label || marker.shape || "marker"}` };
   }
   function getMergedMarkers() { return Object.values(runtime().markerLayers || {}).flat().sort((a, b) => Number(a.time) - Number(b.time)); }

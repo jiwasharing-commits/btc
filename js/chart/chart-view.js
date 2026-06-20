@@ -1,11 +1,47 @@
+function getCandleRawTime(candle) {
+  return candle?.time ?? candle?.openTime ?? candle?.open_time ?? candle?.closeTime ?? candle?.close_time;
+}
+
+function formatCandlesForChart(candles = [], timeframe = getActiveTimeframe()) {
+  const utils = window.BtcDash.utils || {};
+  const byTime = new Map();
+  const diagnostics = {
+    timeframe,
+    rawCount: candles.length,
+    formattedCount: 0,
+    duplicateTimeCount: 0,
+    invalidTimeCount: 0,
+    invalidOhlcCount: 0,
+    firstRawTime: getCandleRawTime(candles[0]),
+    lastRawTime: getCandleRawTime(candles.at(-1)),
+    firstChartTime: null,
+    lastChartTime: null,
+    detectedFirstUnit: utils.detectTimeUnit?.(getCandleRawTime(candles[0])) || "unknown",
+    detectedLastUnit: utils.detectTimeUnit?.(getCandleRawTime(candles.at(-1))) || "unknown",
+    warnings: []
+  };
+  candles.forEach((candle) => {
+    const rawTime = getCandleRawTime(candle);
+    const time = utils.normalizeChartTime?.(rawTime);
+    if (!Number.isFinite(time)) { diagnostics.invalidTimeCount += 1; return; }
+    const row = { time, open: Number(candle.open), high: Number(candle.high), low: Number(candle.low), close: Number(candle.close) };
+    if (![row.open, row.high, row.low, row.close].every(Number.isFinite) || row.high < row.low) { diagnostics.invalidOhlcCount += 1; return; }
+    if (byTime.has(time)) diagnostics.duplicateTimeCount += 1;
+    byTime.set(time, row);
+  });
+  const data = [...byTime.values()].sort((a, b) => a.time - b.time);
+  diagnostics.formattedCount = data.length;
+  diagnostics.firstChartTime = data[0]?.time ?? null;
+  diagnostics.lastChartTime = data.at(-1)?.time ?? null;
+  if (diagnostics.invalidTimeCount) diagnostics.warnings.push("invalid-time-filtered");
+  if (diagnostics.invalidOhlcCount) diagnostics.warnings.push("invalid-ohlc-filtered");
+  if (diagnostics.duplicateTimeCount) diagnostics.warnings.push("duplicate-time-replaced");
+  if (data.some((row) => row.time > 10000000000)) diagnostics.warnings.push("chart-time-not-seconds");
+  return { data, diagnostics };
+}
+
 function toChartCandles(candles) {
-  return candles.map((candle) => ({
-    time: Math.floor(candle.open_time / 1000),
-    open: Number(candle.open),
-    high: Number(candle.high),
-    low: Number(candle.low),
-    close: Number(candle.close)
-  })).filter((candle) => Number.isFinite(candle.time) && [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite) && candle.high >= candle.low);
+  return formatCandlesForChart(candles).data;
 }
 
 function getBaseCandleOptions() {
@@ -45,13 +81,20 @@ function assertBaseChartReady() {
   const hasCandleSeries = Boolean(rt.candleSeries || candleSeries);
   const hasContainer = Boolean(rt.chartContainer || qs('#main-chart'));
   const setDataSuccess = rt.lastSetDataStatus ? Boolean(rt.lastSetDataStatus.success) : Boolean(hasCandleSeries);
-  const reason = !hasChart ? "missing-chart" : !hasCandleSeries ? "missing-candle-series" : !hasContainer ? "missing-chart-container" : !setDataSuccess ? "set-data-failed" : "ready";
-  return { ready: hasChart && hasCandleSeries && hasContainer && setDataSuccess, hasChart, hasCandleSeries, hasContainer, setDataSuccess, reason };
+  const formatted = getFormattedCandlesForTimeframe(getActiveChartTimeframe());
+  const visibleDiagnostics = getVisibleRangeDiagnostics(getActiveChartTimeframe(), rangeState[activeWorkspace]);
+  const formattedCandleCount = formatted.length;
+  const hasValidTimes = Number.isFinite(formatted[0]?.time) && Number.isFinite(formatted.at(-1)?.time);
+  const visibleOk = visibleDiagnostics.visibleCandlesInRange === null || visibleDiagnostics.visibleCandlesInRange > 0;
+  const warnings = [...(visibleDiagnostics.warnings || [])];
+  const reason = !hasChart ? "missing-chart" : !hasCandleSeries ? "missing-candle-series" : !hasContainer ? "missing-chart-container" : !setDataSuccess ? "set-data-failed" : !formattedCandleCount ? "missing-formatted-candles" : !hasValidTimes ? "invalid-chart-time" : !visibleOk ? "visible-range-has-no-candles" : "ready";
+  return { ready: hasChart && hasCandleSeries && hasContainer && setDataSuccess && formattedCandleCount > 0 && hasValidTimes && visibleOk, hasChart, hasCandleSeries, hasContainer, setDataSuccess, formattedCandleCount, visibleCandlesInRange: visibleDiagnostics.visibleCandlesInRange, reason, warnings };
 }
 function debugBaseChart() {
   const timeframe = getActiveChartTimeframe();
   const candles = marketData[timeframe] || [];
-  const formatted = toChartCandles(getDisplayCandlesForChart(timeframe, getActiveCandles()));
+  const formatted = getFormattedCandlesForTimeframe(timeframe).length ? getFormattedCandlesForTimeframe(timeframe) : formatCandlesForChart(getDisplayCandlesForChart(timeframe, getActiveCandles()), timeframe).data;
+  const timeScaleDebug = getVisibleRangeDiagnostics(timeframe, rangeState[activeWorkspace]);
   const rt = ensureChartRuntime();
   const chart = getActiveChart();
   const series = getActiveCandleSeries();
@@ -74,12 +117,92 @@ function debugBaseChart() {
     formattedCandleCount: formatted.length,
     firstCandle: formatted[0] || null,
     lastCandle: formatted.at(-1) || null,
+    firstChartTime: formatted[0]?.time ?? null,
+    lastChartTime: formatted.at(-1)?.time ?? null,
+    visibleRange: timeScaleDebug.visibleRange,
+    visibleCandlesInRange: timeScaleDebug.visibleCandlesInRange,
+    timeUnitWarnings: timeScaleDebug.warnings,
     setDataSuccess: Boolean(rt.lastSetDataStatus?.success),
     lastCandleRenderAt: rt.lastCandleRenderAt || null,
     candleSeriesMethods: { hasSetData: typeof series?.setData === "function", hasSetMarkers: typeof series?.setMarkers === "function", hasPriceToCoordinate: typeof series?.priceToCoordinate === "function" },
     chartMethods: { hasAddCandlestickSeries: typeof chart?.addCandlestickSeries === "function", hasAddLineSeries: typeof chart?.addLineSeries === "function", hasAddSeries: typeof chart?.addSeries === "function", hasRemoveSeries: typeof chart?.removeSeries === "function" },
     warnings
   };
+}
+
+
+function getFormattedCandlesForTimeframe(timeframe = getActiveChartTimeframe()) {
+  return window.BtcDash.state?.chartRuntime?.lastFormattedCandles?.[timeframe] || [];
+}
+
+function getVisibleRangeDiagnostics(timeframe = getActiveChartTimeframe(), rangePreset = rangeState[activeWorkspace]) {
+  const chart = getActiveChart();
+  const formatted = getFormattedCandlesForTimeframe(timeframe);
+  const warnings = [];
+  let visibleRange = null;
+  let logicalRange = null;
+  try { visibleRange = chart?.timeScale?.()?.getVisibleRange?.() || null; } catch (error) { warnings.push(`visible-range-error:${error.message}`); }
+  try { logicalRange = chart?.timeScale?.()?.getVisibleLogicalRange?.() || null; } catch (error) { warnings.push(`logical-range-error:${error.message}`); }
+  const normalizedVisibleRange = visibleRange ? window.BtcDash.utils?.normalizeVisibleRange?.(visibleRange) : null;
+  const from = normalizedVisibleRange?.from;
+  const to = normalizedVisibleRange?.to;
+  const visibleCandlesInRange = normalizedVisibleRange?.valid ? formatted.filter((candle) => candle.time >= from && candle.time <= to).length : null;
+  if (normalizedVisibleRange?.valid && visibleCandlesInRange === 0) warnings.push("visible-range-has-no-candles");
+  return {
+    activeTimeframe: timeframe,
+    candleCount: formatted.length,
+    firstChartTime: formatted[0]?.time ?? null,
+    lastChartTime: formatted.at(-1)?.time ?? null,
+    firstRawTime: window.BtcDash.state?.chartRuntime?.lastCandleDiagnostics?.[timeframe]?.firstRawTime ?? null,
+    lastRawTime: window.BtcDash.state?.chartRuntime?.lastCandleDiagnostics?.[timeframe]?.lastRawTime ?? null,
+    detectedRawUnit: window.BtcDash.state?.chartRuntime?.lastCandleDiagnostics?.[timeframe]?.detectedLastUnit || "unknown",
+    detectedChartUnit: formatted[0]?.time ? window.BtcDash.utils?.detectTimeUnit?.(formatted[0].time) : "unknown",
+    visibleRange,
+    visibleRangeUnit: visibleRange ? window.BtcDash.utils?.normalizeVisibleRange?.(visibleRange)?.originalUnit : "unknown",
+    logicalRange,
+    visibleCandlesInRange,
+    rangePreset,
+    warnings
+  };
+}
+
+function applyChartRange(timeframe = getActiveChartTimeframe(), rangeKey = rangeState[activeWorkspace]) {
+  const chart = getActiveChart();
+  const formatted = getFormattedCandlesForTimeframe(timeframe);
+  const warnings = [];
+  if (!chart?.timeScale || !formatted.length) return { applied: false, reason: "missing-chart-or-candles", warnings };
+  const timeScale = chart.timeScale();
+  if (!rangeKey || rangeKey === "Full") {
+    timeScale.fitContent?.();
+    const diagnostics = getVisibleRangeDiagnostics(timeframe, rangeKey);
+    window.BtcDash.state.chartRuntime.lastVisibleRangeDiagnostics = { ...diagnostics, appliedRange: rangeKey, fallbackApplied: false };
+    return { applied: true, mode: "fitContent", diagnostics, warnings };
+  }
+  const match = String(rangeKey).match(/^(\d+)([DMY])$/);
+  if (!match) {
+    timeScale.fitContent?.();
+    warnings.push("unknown-range-preset-fitContent");
+    const diagnostics = getVisibleRangeDiagnostics(timeframe, rangeKey);
+    window.BtcDash.state.chartRuntime.lastVisibleRangeDiagnostics = { ...diagnostics, appliedRange: rangeKey, fallbackApplied: true, warnings: [...diagnostics.warnings, ...warnings] };
+    return { applied: true, mode: "fitContent", diagnostics, warnings };
+  }
+  const units = { D: 86400, M: 30 * 86400, Y: 365 * 86400 };
+  const last = formatted.at(-1).time;
+  const from = last - Number(match[1]) * units[match[2]];
+  const normalized = window.BtcDash.utils?.normalizeVisibleRange?.({ from, to: last });
+  if (normalized?.valid) timeScale.setVisibleRange?.({ from: normalized.from, to: normalized.to });
+  let diagnostics = getVisibleRangeDiagnostics(timeframe, rangeKey);
+  if (diagnostics.visibleCandlesInRange === 0) {
+    timeScale.fitContent?.();
+    warnings.push("visible range empty; fitContent fallback applied");
+    diagnostics = getVisibleRangeDiagnostics(timeframe, rangeKey);
+  }
+  window.BtcDash.state.chartRuntime.lastVisibleRangeDiagnostics = { ...diagnostics, appliedRange: rangeKey, fallbackApplied: warnings.length > 0, warnings: [...diagnostics.warnings, ...warnings] };
+  return { applied: true, mode: normalized?.valid ? "setVisibleRange" : "fitContent", range: normalized, diagnostics, warnings };
+}
+
+function debugTimeScale() {
+  return getVisibleRangeDiagnostics(getActiveChartTimeframe(), rangeState[activeWorkspace]);
 }
 
 function chart(title, timeframe, closedCandles, strip = []) {
@@ -551,7 +674,14 @@ function renderTradingChart() {
   });
 
   const candleOptions = getBaseCandleOptions();
-  const formattedCandles = toChartCandles(displayCandles);
+  const formatted = formatCandlesForChart(displayCandles, timeframe);
+  const formattedCandles = formatted.data;
+  if (window.BtcDash.state?.chartRuntime) {
+    window.BtcDash.state.chartRuntime.lastFormattedCandles = window.BtcDash.state.chartRuntime.lastFormattedCandles || { "1W": [], "1D": [], "4H": [], "1H": [] };
+    window.BtcDash.state.chartRuntime.lastCandleDiagnostics = window.BtcDash.state.chartRuntime.lastCandleDiagnostics || { "1W": null, "1D": null, "4H": null, "1H": null };
+    window.BtcDash.state.chartRuntime.lastFormattedCandles[timeframe] = formattedCandles;
+    window.BtcDash.state.chartRuntime.lastCandleDiagnostics[timeframe] = formatted.diagnostics;
+  }
   const candleCreated = window.BtcDash.chart.adapter?.createCandlestickSeriesSafe?.(tradingChart, candleOptions) || {};
   candleSeries = candleCreated.series;
   if (!candleSeries && typeof tradingChart.addCandlestickSeries === "function") {
@@ -572,7 +702,11 @@ function renderTradingChart() {
   setActiveChartRuntime({ chart: tradingChart, candleSeries, chartContainer: container, activeTimeframe: timeframe, activeWorkspace, activeRange: rangeState[activeWorkspace] || null, chartId: `chart-${Date.now()}`, lastChartRenderAt: new Date().toISOString(), lastCandleRenderAt: new Date().toISOString(), lastSetDataStatus: setDataStatus, lastCandleCreateStatus: candleCreated, renderSucceeded: true });
   addDummyPriceLines(closedCandles, running);
   addDummyMarkers(closedCandles, running, timeframe);
+  if (window.BtcDash.state?.chartRuntime) {
+    window.BtcDash.state.chartRuntime.runningPreviewDiagnostics = running ? { rawTime: getCandleRawTime(running), chartTime: window.BtcDash.utils?.normalizeChartTime?.(getCandleRawTime(running)), detectedUnit: window.BtcDash.utils?.detectTimeUnit?.(getCandleRawTime(running)), rendered: Boolean(running && closedCandles.length && running.open_time > closedCandles.at(-1).open_time) } : { rendered: false };
+  }
   tradingChart.timeScale().fitContent();
+  applyChartRange(timeframe, rangeState[activeWorkspace]);
   window.BtcDash.chart.markers?.reapplyActiveMarkers?.("after-candle-render");
   requestAnimationFrame(() => {
     renderActiveLayers(timeframe, { reason: "chart-render" });
@@ -668,6 +802,9 @@ window.BtcDash = window.BtcDash || {};
 window.BtcDash.chart = {
   ...window.BtcDash.chart,
   toChartCandles,
+  formatCandlesForChart,
+  applyChartRange,
+  debugTimeScale,
   chart,
   clearTradingChart,
   addDummyPriceLines,

@@ -60,9 +60,7 @@
   }
 
   function toChartTime(value) {
-    const numeric = Number(value);
-    if (!Number.isFinite(numeric)) return value;
-    return numeric > 10000000000 ? Math.floor(numeric / 1000) : numeric;
+    return window.BtcDash.utils?.normalizeChartTime?.(value) ?? null;
   }
 
   function fallbackXFromCandles(time, timeframe, container, side) {
