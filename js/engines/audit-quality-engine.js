@@ -230,6 +230,31 @@
     return { status: issues.length ? "Warning" : "OK", issues };
   }
 
+
+  function auditFvgBoundaryQuality() {
+    const issues = [];
+    const config = window.BtcDash.config?.FVG_BOUNDARY_DISPLAY_CONFIG || {};
+    const maxVisible = config.visibleLimit?.maxTotalAll || 6;
+    const contexts = state().fvgContexts || {};
+    Object.entries(contexts).forEach(([timeframe, ctx]) => {
+      const visible = ctx?.visibleBoundaryFvgs || ctx?.visibleFvgs || [];
+      if (visible.length > maxVisible) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: visible FVG count above boundary limit", value: visible.length, expected: maxVisible }));
+      visible.forEach((fvg, index) => {
+        if (["filled", "mitigated", "invalidated", "historical", "Filled", "Mitigated"].includes(fvg.status)) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: filled/mitigated/historical FVG rendered on chart. Expected renderPolicy=hide.", value: fvg.status, path: `state.fvgContexts.${timeframe}.visibleBoundaryFvgs[${index}]` }));
+        if (fvg.renderPolicy !== "boundary") issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: visible FVG renderPolicy is not boundary", value: fvg.renderPolicy, expected: "boundary" }));
+        if (fvg.hiddenReason === "distance") issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: far FVG is visible", value: fvg.distancePct }));
+      });
+      if ((ctx?.suppressedFvgs || []).some((fvg) => visible.some((row) => row.id === fvg.id))) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: suppressed duplicate is still visible" }));
+      const projectedCount = visible.filter((fvg) => fvg.isHTFProjection).length;
+      const maxProjected = config.visibleLimit?.maxTotalProjected || 2;
+      if (projectedCount > maxProjected) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: too many HTF projections visible", value: projectedCount, expected: maxProjected }));
+    });
+    const layerState = state().chartRuntime?.layerState || {};
+    const fvgOverlayCount = window.BtcDash.chart?.overlayRegistry?.getOverlayCountByLayer?.("fvg") || 0;
+    if (layerState.fvg === false && fvgOverlayCount > 0) issues.push(createAuditIssue({ severity: "critical", category: "overlay", engine: "FVG", message: "FVG layer OFF but overlay registry still has FVG overlays", value: fvgOverlayCount, expected: 0 }));
+    return { status: issues.some((x) => x.severity === "critical") ? "Critical" : issues.length ? "Warning" : "OK", issues };
+  }
+
   function auditPerformanceLimits() {
     const issues = [];
     const limits = cfg().performanceRules || {};
@@ -269,14 +294,15 @@
       const marketZoneAudit = isPipelineLight ? { issues: [] } : auditMarketZoneQuality();
       const mtfAudit = isPipelineLight ? { issues: [] } : auditMtfGuard();
       const structureHierarchyAudit = auditStructureHierarchy();
+      const fvgBoundaryAudit = auditFvgBoundaryQuality();
       const performanceAudit = auditPerformanceLimits();
-      let issues = limitIssues([dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, structureHierarchyAudit, performanceAudit].flatMap((x) => x.issues || []));
+      let issues = limitIssues([dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, structureHierarchyAudit, fvgBoundaryAudit, performanceAudit].flatMap((x) => x.issues || []));
       if (isPipelineLight) issues = issues.slice(0, perfAudit.maxIssuesInNormalRun || 80);
       const criticalIssues = issues.filter((issue) => issue.severity === "critical");
       const warningIssues = issues.filter((issue) => issue.severity === "warning");
       const infoIssues = issues.filter((issue) => issue.severity === "info");
       const status = criticalIssues.length ? "Critical" : warningIssues.length ? "Warning" : "OK";
-      const context = { available: true, status, severity: criticalIssues.length ? "critical" : warningIssues.length ? "warning" : "info", lastRunAt: nowIso(), lastRunReason: options.reason || "manual", summary: { criticalCount: criticalIssues.length, warningCount: warningIssues.length, infoCount: infoIssues.length, totalIssues: issues.length }, dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, structureHierarchyAudit, performanceAudit, issues, criticalIssues, warningIssues, infoIssues, debugStats: { triggeredByPipeline: Boolean(options.triggeredByPipeline), includeDeepScan: Boolean(options.includeDeepScan), mode: isPipelineLight ? "light" : (options.mode || "deep"), durationMs: Number((performance.now() - started).toFixed(1)), issueLimit: isPipelineLight ? (perfAudit.maxIssuesInNormalRun || 80) : (config.safeScanRules?.maxTotalIssues || 300) }, message: status === "OK" ? "Audit OK. Planning context only." : config.wording?.criticalBanner || "Review debug audit before relying on context." };
+      const context = { available: true, status, severity: criticalIssues.length ? "critical" : warningIssues.length ? "warning" : "info", lastRunAt: nowIso(), lastRunReason: options.reason || "manual", summary: { criticalCount: criticalIssues.length, warningCount: warningIssues.length, infoCount: infoIssues.length, totalIssues: issues.length }, dataAudit, runningCandleAudit, contextAudit, scoreAudit, rebuildAudit, overlayAudit, autoscaleAudit, marketZoneAudit, mtfAudit, structureHierarchyAudit, fvgBoundaryAudit, performanceAudit, issues, criticalIssues, warningIssues, infoIssues, debugStats: { triggeredByPipeline: Boolean(options.triggeredByPipeline), includeDeepScan: Boolean(options.includeDeepScan), mode: isPipelineLight ? "light" : (options.mode || "deep"), durationMs: Number((performance.now() - started).toFixed(1)), issueLimit: isPipelineLight ? (perfAudit.maxIssuesInNormalRun || 80) : (config.safeScanRules?.maxTotalIssues || 300) }, message: status === "OK" ? "Audit OK. Planning context only." : config.wording?.criticalBanner || "Review debug audit before relying on context." };
       state().auditQualityContext = context;
       return context;
     } catch (error) {
@@ -289,7 +315,7 @@
 
   function getAuditQualityContext() { return state().auditQualityContext || createEmptyAuditQualityContext(); }
 
-  window.BtcDash.engines.auditQuality = { runAuditQuality, createEmptyAuditQualityContext, createAuditIssue, auditMarketDataIntegrity, auditRunningCandleLeak, auditContextShapes, auditScoreSanity, auditRebuildPipeline, auditOverlayRegistry, auditAutoscaleRisk, auditMarketZoneQuality, auditMtfGuard, auditStructureHierarchy, auditPerformanceLimits, getAuditQualityContext };
+  window.BtcDash.engines.auditQuality = { runAuditQuality, createEmptyAuditQualityContext, createAuditIssue, auditMarketDataIntegrity, auditRunningCandleLeak, auditContextShapes, auditScoreSanity, auditRebuildPipeline, auditOverlayRegistry, auditAutoscaleRisk, auditMarketZoneQuality, auditMtfGuard, auditStructureHierarchy, auditFvgBoundaryQuality, auditPerformanceLimits, getAuditQualityContext };
   window.BtcDash.auditQuality = window.BtcDash.engines.auditQuality;
   window.runAuditQuality = runAuditQuality;
 })();

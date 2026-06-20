@@ -414,3 +414,49 @@ table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius:
     min-height: 420px !important;
   }
 }
+
+/* Prompt 6J: boundary-only FVG rendering. */
+.fvg-boundary-layer {}
+.fvg-boundary-zone {
+  position: absolute;
+  pointer-events: none;
+  min-width: 12px;
+  min-height: 2px;
+  z-index: 8;
+}
+.fvg-boundary-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1.25px solid currentColor;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+}
+.fvg-boundary-line-upper { top: 0; }
+.fvg-boundary-line-lower { bottom: 0; }
+.fvg-boundary-line-dashed { border-top-style: dashed; }
+.fvg-boundary-label {
+  position: absolute;
+  right: -2px;
+  top: 50%;
+  transform: translate(100%, -50%);
+  max-width: 130px;
+  color: #dbeafe;
+  font-size: 10px;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+.fvg-boundary-bullish { color: rgba(45, 212, 191, 0.95); }
+.fvg-boundary-bearish { color: rgba(251, 146, 60, 0.95); }
+.fvg-boundary-local { opacity: 0.85; }
+.fvg-boundary-htf { opacity: 0.35; }
+.fvg-boundary-fresh .fvg-boundary-label,
+.fvg-boundary-active .fvg-boundary-label { color: #e0f2fe; }
+.fvg-boundary-touched,
+.fvg-boundary-partial { opacity: 0.65; }
+.fvg-card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.7rem; }
+.fvg-zone-table { width: 100%; border-collapse: collapse; }
+.fvg-status-badge,
+.fvg-score-badge { border-radius: 999px; padding: 0.12rem 0.45rem; background: rgba(148, 163, 184, 0.16); color: #cbd5e1; font-size: 0.72rem; }
+.fvg-muted-historical { opacity: 0.62; }
+.fvg-debug-summary { color: #94a3b8; font-size: 0.75rem; }

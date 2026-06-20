@@ -80,6 +80,26 @@
   };
 
 
+  const FVG_BOUNDARY_DISPLAY_CONFIG = {
+    enabled: true,
+    detectionMode: "wick_fvg",
+    bodyImbalanceEnabled: false,
+    atrLength: 14,
+    minGapPct: { "1W": 0.80, "1D": 0.45, "4H": 0.22, "1H": 0.10 },
+    minGapAtr: { "1W": 0.35, "1D": 0.28, "4H": 0.18, "1H": 0.10 },
+    displacementBodyPct: { "1W": 50, "1D": 48, "4H": 42, "1H": 35 },
+    requireDisplacementCandle: { "1W": true, "1D": true, "4H": true, "1H": false },
+    maxAgeBars: { "1W": 80, "1D": 120, "4H": 180, "1H": 240 },
+    maxDistancePctFromPrice: { "1W": 24, "1D": 14, "4H": 7, "1H": 4 },
+    statusDisplayPolicy: { fresh: "show", active: "show", touched: "show", partial: "show", midpointTouched: "tableOnly", mitigated: "hide", filled: "hide", invalidated: "hide", historical: "hide" },
+    visibleLimit: { bullishBelow: 2, bearishAbove: 2, inside: 1, maxTotalLocal: 5, maxTotalProjected: 2, maxTotalAll: 6 },
+    boundaryRender: { mode: "boundary_only", showFaintFill: false, fillOpacity: 0.03, localLineWidth: 1.25, htfLineWidth: 1, labelFontSize: 10, extendBars: { "1W": 20, "1D": 30, "4H": 40, "1H": 50 } },
+    projection: { enabled: true, localWins: true, htfDashed: true, htfOpacity: 0.35, localOpacity: 0.85, maxProjectedVisible: { "1W": 0, "1D": 1, "4H": 2, "1H": 2 } },
+    dedupe: { enabled: true, overlapThreshold: 0.30, proximityPct: { "1W": 1.50, "1D": 0.90, "4H": 0.55, "1H": 0.30 }, maxMergedWidthPct: { "1W": 8, "1D": 5, "4H": 3, "1H": 1.5 } },
+    scoring: { minScoreToRender: 4.5, minScoreForTableActive: 3.5, scoreMax: 10 }
+  };
+
+
   const FVG_V2_CONFIG = {
     enabled: true,
     timeframes: ["1W", "1D", "4H", "1H"],
@@ -139,7 +159,7 @@
         structureContexts: ["available", "timeframe", "rawPivots", "candidateSwings", "zigzagSwings", "validLegSwings", "internalSwings", "majorSwings", "setupSwings", "timingSwings", "confirmedOperationalPivots", "operationalSwingPath", "setupOperationalSwings", "timingOperationalSwings", "operationalStructureLabels", "analysisSwings", "displaySwings", "analysisSource", "displaySource", "labels", "trendState", "bias", "bosChoch", "summary"],
         liquidityContexts: ["available", "timeframe", "rawEqualHighs", "rawEqualLows", "buySidePools", "sellSidePools", "activeBuySidePools", "activeSellSidePools", "visiblePools", "marketZoneRows", "summary", "status"],
         srContexts: ["available", "timeframe", "rawLevels", "zoneClusters", "zones", "activeSupports", "activeResistances", "nearestSupport", "nearestResistance", "visibleZones", "marketZoneRows", "summary", "status"],
-        fvgContexts: ["available", "timeframe", "rawFvgs", "validFvgs", "activeBullish", "activeBearish", "visibleFvgs", "marketZoneRows", "summary", "status"],
+        fvgContexts: ["available", "timeframe", "rawFvgs", "validFvgs", "activeBullish", "activeBearish", "visibleFvgs", "visibleBoundaryFvgs", "hiddenFvgs", "suppressedFvgs", "marketZoneRows", "summary", "status"],
         channelContexts: ["available", "timeframe", "localChannel", "projectedChannels", "historicalChannels", "nearestBoundary", "marketZoneRows", "summary", "status"],
         marketZoneContexts: ["activeTimeframe", "upside", "downside", "summary"]
       }
@@ -163,6 +183,7 @@
     LIQUIDITY_V2_CONFIG,
     SR_V2_CONFIG,
     FVG_V2_CONFIG,
+    FVG_BOUNDARY_DISPLAY_CONFIG,
     CHANNEL_V2_CONFIG,
     PERFORMANCE_CONFIG,
     AUDIT_QUALITY_CONFIG
