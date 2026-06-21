@@ -233,21 +233,28 @@
 
   function auditFvgBoundaryQuality() {
     const issues = [];
-    const config = window.BtcDash.config?.FVG_BOUNDARY_DISPLAY_CONFIG || {};
-    const maxVisible = config.visibleLimit?.maxTotalAll || 6;
+    const boxConfig = window.BtcDash.config?.FVG_RIGHT_EXTENDED_BOX_CONFIG || {};
+    const config = boxConfig.enabled ? boxConfig : (window.BtcDash.config?.FVG_BOUNDARY_DISPLAY_CONFIG || {});
+    const maxVisible = config.visibleLimit?.maxTotalAll || 9;
+    const maxProjected = config.visibleLimit?.maxTotalProjected || 2;
     const contexts = state().fvgContexts || {};
     Object.entries(contexts).forEach(([timeframe, ctx]) => {
-      const visible = ctx?.visibleBoundaryFvgs || ctx?.visibleFvgs || [];
-      if (visible.length > maxVisible) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: visible FVG count above boundary limit", value: visible.length, expected: maxVisible }));
+      const visible = ctx?.visibleRightExtendedFvgs || ctx?.visibleBoxFvgs || ctx?.visibleBoundaryFvgs || ctx?.visibleFvgs || [];
+      const activeCount = ctx?.debugStats?.activeCount ?? ((ctx?.activeBullish?.length || 0) + (ctx?.activeBearish?.length || 0));
+      if (visible.length > maxVisible) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: visible FVG box count above limit", value: visible.length, expected: maxVisible }));
+      if (timeframe === "1H" && activeCount > 0 && visible.length === 0) issues.push(createAuditIssue({ severity: "warning", category: "selection", timeframe, engine: "FVG", message: "FVG selection warning: 1H has active FVGs but zero visible boxes.", value: activeCount, expected: ">= 1 visible eligible box" }));
+      if (timeframe === "1H" && visible.length > 0 && !visible.some((fvg) => !fvg.isHTFProjection) && (ctx?.validFvgs || []).some((fvg) => fvg.timeframe === "1H" && fvg.renderPolicy === "box_right_extend")) issues.push(createAuditIssue({ severity: "warning", category: "selection", timeframe, engine: "FVG", message: "FVG selection warning: 1H local FVG suppressed entirely by HTF projection." }));
       visible.forEach((fvg, index) => {
-        if (["filled", "mitigated", "invalidated", "historical", "Filled", "Mitigated"].includes(fvg.status)) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: filled/mitigated/historical FVG rendered on chart. Expected renderPolicy=hide.", value: fvg.status, path: `state.fvgContexts.${timeframe}.visibleBoundaryFvgs[${index}]` }));
-        if (fvg.renderPolicy !== "boundary") issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: visible FVG renderPolicy is not boundary", value: fvg.renderPolicy, expected: "boundary" }));
+        if (["filled", "mitigated", "invalidated", "historical", "Filled", "Mitigated"].includes(fvg.status)) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG display warning: mitigated/filled/historical FVG rendered as box. Expected renderPolicy=hide.", value: fvg.status, path: `state.fvgContexts.${timeframe}.visibleRightExtendedFvgs[${index}]` }));
+        if (fvg.renderPolicy !== "box_right_extend") issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: visible FVG renderPolicy is not box_right_extend", value: fvg.renderPolicy, expected: "box_right_extend" }));
         if (fvg.hiddenReason === "distance") issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: far FVG is visible", value: fvg.distancePct }));
+        const start = Number(window.BtcDash.utils?.normalizeChartTime?.(fvg.startTime || fvg.createdAtTime || fvg.candle3Time));
+        const created = Number(window.BtcDash.utils?.normalizeChartTime?.(fvg.createdAtTime || fvg.candle3Time));
+        if (Number.isFinite(start) && Number.isFinite(created) && start < created) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG display warning: right-extended box starts before FVG creation time.", value: start, expected: created }));
       });
       if ((ctx?.suppressedFvgs || []).some((fvg) => visible.some((row) => row.id === fvg.id))) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: suppressed duplicate is still visible" }));
       const projectedCount = visible.filter((fvg) => fvg.isHTFProjection).length;
-      const maxProjected = config.visibleLimit?.maxTotalProjected || 2;
-      if (projectedCount > maxProjected) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: too many HTF projections visible", value: projectedCount, expected: maxProjected }));
+      if (projectedCount > maxProjected) issues.push(createAuditIssue({ severity: "warning", category: "overlay", timeframe, engine: "FVG", message: "FVG visual warning: too many HTF projection boxes visible", value: projectedCount, expected: maxProjected }));
     });
     const layerState = state().chartRuntime?.layerState || {};
     const fvgOverlayCount = window.BtcDash.chart?.overlayRegistry?.getOverlayCountByLayer?.("fvg") || 0;

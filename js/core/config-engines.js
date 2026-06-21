@@ -99,6 +99,20 @@
     scoring: { minScoreToRender: 4.5, minScoreForTableActive: 3.5, scoreMax: 10 }
   };
 
+  const FVG_RIGHT_EXTENDED_BOX_CONFIG = {
+    enabled: true,
+    renderMode: "box_right_extend",
+    visibleLimit: { bullishBelow: 4, bearishAbove: 4, inside: 1, maxTotalLocal: 9, maxTotalProjected: 2, maxTotalAll: 9 },
+    defaultCompactLimit: { bullishBelow: 2, bearishAbove: 2, inside: 1, maxTotalAll: 5 },
+    detailModeLimit: { bullishBelow: 4, bearishAbove: 4, inside: 1, maxTotalAll: 9 },
+    allowedChartStatuses: ["fresh", "active", "touched", "partial", "inside", "midpointTouched"],
+    hiddenChartStatuses: ["mitigated", "filled", "invalidated", "historical"],
+    boxRender: { extendRightToVisibleEdge: true, extendLeft: false, startFromConfirmedCandle: true, localFillOpacity: 0.07, localBorderOpacity: 0.82, localBorderWidth: 1.2, htfFillOpacity: 0.035, htfBorderOpacity: 0.40, htfBorderWidth: 1, currentInsideFillOpacity: 0.10, currentInsideBorderOpacity: 0.95, showMidline: false, showLabel: true, labelFontSize: 10 },
+    selectionRelaxation: { "1W": { minVisibleFallback: 0 }, "1D": { minVisibleFallback: 1 }, "4H": { minVisibleFallback: 1 }, "1H": { minVisibleFallback: 2, nearestPrivilege: true, localWinsAgainstHTF: true, allowModerateScoreIfNearest: true } },
+    distancePctFromPrice: { "1W": 30, "1D": 18, "4H": 9, "1H": 6 },
+    minScoreToRender: { "1W": 4.0, "1D": 4.0, "4H": 3.8, "1H": 3.2 }
+  };
+
 
   const FVG_V2_CONFIG = {
     enabled: true,
@@ -159,7 +173,7 @@
         structureContexts: ["available", "timeframe", "rawPivots", "candidateSwings", "zigzagSwings", "validLegSwings", "internalSwings", "majorSwings", "setupSwings", "timingSwings", "confirmedOperationalPivots", "operationalSwingPath", "setupOperationalSwings", "timingOperationalSwings", "operationalStructureLabels", "analysisSwings", "displaySwings", "analysisSource", "displaySource", "labels", "trendState", "bias", "bosChoch", "summary"],
         liquidityContexts: ["available", "timeframe", "rawEqualHighs", "rawEqualLows", "buySidePools", "sellSidePools", "activeBuySidePools", "activeSellSidePools", "visiblePools", "marketZoneRows", "summary", "status"],
         srContexts: ["available", "timeframe", "rawLevels", "zoneClusters", "zones", "activeSupports", "activeResistances", "nearestSupport", "nearestResistance", "visibleZones", "marketZoneRows", "summary", "status"],
-        fvgContexts: ["available", "timeframe", "rawFvgs", "validFvgs", "activeBullish", "activeBearish", "visibleFvgs", "visibleBoundaryFvgs", "hiddenFvgs", "suppressedFvgs", "marketZoneRows", "summary", "status"],
+        fvgContexts: ["available", "timeframe", "rawFvgs", "validFvgs", "activeBullish", "activeBearish", "visibleFvgs", "visibleBoundaryFvgs", "visibleBoxFvgs", "visibleRightExtendedFvgs", "hiddenFvgs", "suppressedFvgs", "marketZoneRows", "summary", "status"],
         channelContexts: ["available", "timeframe", "localChannel", "projectedChannels", "historicalChannels", "nearestBoundary", "marketZoneRows", "summary", "status"],
         marketZoneContexts: ["activeTimeframe", "upside", "downside", "summary"]
       }
@@ -184,6 +198,7 @@
     SR_V2_CONFIG,
     FVG_V2_CONFIG,
     FVG_BOUNDARY_DISPLAY_CONFIG,
+    FVG_RIGHT_EXTENDED_BOX_CONFIG,
     CHANNEL_V2_CONFIG,
     PERFORMANCE_CONFIG,
     AUDIT_QUALITY_CONFIG
