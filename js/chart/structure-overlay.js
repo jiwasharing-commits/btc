@@ -9,7 +9,7 @@
   }
 
   function getDisplaySwings(context) {
-    return context?.displaySwings || context?.displayLabels || context?.labels || [];
+    return context?.visibleStructureLabels || context?.displaySwings || context?.displayLabels || context?.labels || [];
   }
 
   function buildStructureOverlayItems(timeframe) {
@@ -24,7 +24,7 @@
       price: item.price,
       startTime: item.time,
       endTime: item.time,
-      label: item.label,
+      label: item.displayLabel || item.microDisplayLabel || item.label,
       drawPolicy: "show",
       meta: { structureType: item.structureType, layer: item.layer }
     }));
@@ -55,12 +55,12 @@
     const markers = items.map((item) => ({
       time: item.startTime,
       price: item.price,
-      text: item.label,
+      text: item.displayLabel || item.microDisplayLabel || item.label,
       shape: item.type === "low" || item.label === "HL" || item.label === "LL" ? "arrowUp" : "arrowDown",
       position: item.type === "low" || item.label === "HL" || item.label === "LL" ? "belowBar" : "aboveBar",
       color: item.type === "low" || item.label === "HL" || item.label === "LL" ? "#facc15" : "#38bdf8",
       type: item.type,
-      label: item.label
+      label: item.displayLabel || item.microDisplayLabel || item.label
     }));
     const markerStatus = window.BtcDash.chart.markers?.renderMarkers?.("structure", timeframe || activeTimeframe, markers);
     const registered = items.map((item) => window.BtcDash.chart.overlayRegistry?.registerOverlay({ ...item, key: `${item.layer}|${item.timeframe}|${item.sourceId}|${item.type}|${item.price}`, meta: { ...item.meta, markerStatus } })).filter(Boolean);

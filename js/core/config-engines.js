@@ -60,6 +60,33 @@
     wording: { rawPivot: "Raw Pivot", internalStructure: "Internal Structure", majorStructure: "Major Structure", closeConfirmed: "Close Confirmed", wickOnly: "Wick Only / Sweep Context", needsConfirmation: "Needs Confirmation", planningOnly: "Planning context only.", referenceOnly: "Reference only." }
   };
 
+  const LTF_STRUCTURE_LABEL_CONFIG = {
+    enabled: true,
+    preserveWeeklyDailyBehavior: true,
+    closedCandleOnly: true,
+    adaptive: { atrLength: 14, volatilitySmaLength: 50, minVolatilityRatio: 0.30, maxVolatilityRatio: 2.50, adjustmentPower: 0.60, highVolatilityRatio: 1.30, extremeVolatilityRatio: 1.80, lowVolatilityRatio: 0.70 },
+    "4H": {
+      role: "setup_mapper",
+      labelMode: "setupSwingsOnly",
+      operationalSwingDisplay: "internalOnly",
+      operationalSwingsCanBeLabeledAsMainStructure: false,
+      setupSwingRules: { minLegBars: 8, minBarGap: 10, baseMinMovePct: 1.80, minMovePctFloor: 1.20, minMovePctCeiling: 3.20, minAtrMove: 1.40, requireCounterSwing: true, requireCloseConfirmation: true, requireAlternatingSequence: true, useZigZagReplacement: true, rejectWeakLegs: true, rejectSingleCandleSpike: true, rejectMicroRetestAsSetup: true },
+      biasRules: { biasContributionType: "setupOnly", canInfluenceSetupContext: true, canConfirmDailyContext: true, canOverrideWeeklyBias: false, canOverrideDailyBias: false, canSetGlobalBias: false },
+      display: { showSetupLabels: true, showOperationalLabels: false, showRawPivots: false, showCandidateSwings: false, maxVisibleSetupLabels: 10 }
+    },
+    "1H": {
+      role: "timing_tactical",
+      labelMode: "microHiddenByDefault",
+      allowMainLabels: false,
+      showMicroLabelsDefault: false,
+      optionalMicroLabels: true,
+      microLabelPrefix: "Micro",
+      timingSwingRules: { minLegBars: 10, minBarGap: 12, baseMinMovePct: 0.80, minMovePctFloor: 0.50, minMovePctCeiling: 1.80, minAtrMove: 1.10, requireCounterSwing: true, requireCloseConfirmation: true, requireAlternatingSequence: true, useZigZagReplacement: true, rejectNoiseRetest: true, rejectSingleCandleSpike: true },
+      biasRules: { timingOnly: true, canInfluenceBias: false, canInfluenceSetupContext: false, canOverrideWeeklyBias: false, canOverrideDailyBias: false, canOverride4hBias: false, canSetGlobalBias: false },
+      display: { showMainLabels: false, showMicroLabels: false, showRawPivots: false, showCandidateSwings: false, maxVisibleMicroLabels: 0 }
+    }
+  };
+
 
   const LIQUIDITY_V2_CONFIG = {
     enabled: true,
@@ -170,7 +197,7 @@
     scoreRules: { minScore: 0, maxScore: 10, scoreKeys: ["score", "reactionScore", "confluenceScore", "scenarioScore", "riskScore", "qualityScore", "planningScore", "confidenceScore", "strengthScore"] },
     contextRules: {
       requiredByContext: {
-        structureContexts: ["available", "timeframe", "rawPivots", "candidateSwings", "zigzagSwings", "validLegSwings", "internalSwings", "majorSwings", "setupSwings", "timingSwings", "confirmedOperationalPivots", "operationalSwingPath", "setupOperationalSwings", "timingOperationalSwings", "operationalStructureLabels", "analysisSwings", "displaySwings", "analysisSource", "displaySource", "labels", "trendState", "bias", "bosChoch", "summary"],
+        structureContexts: ["available", "timeframe", "rawPivots", "candidateSwings", "zigzagSwings", "validLegSwings", "internalSwings", "majorSwings", "setupSwings", "timingSwings", "confirmedOperationalPivots", "operationalSwingPath", "setupOperationalSwings", "timingOperationalSwings", "operationalStructureLabels", "setupSwingPath", "timingSwingPath", "hiddenOperationalSwings", "hiddenMicroSwings", "visibleStructureLabels", "ltfLabelPolicy", "biasContributionSummary", "analysisSwings", "displaySwings", "analysisSource", "displaySource", "labels", "trendState", "bias", "bosChoch", "summary"],
         liquidityContexts: ["available", "timeframe", "rawEqualHighs", "rawEqualLows", "buySidePools", "sellSidePools", "activeBuySidePools", "activeSellSidePools", "visiblePools", "marketZoneRows", "summary", "status"],
         srContexts: ["available", "timeframe", "rawLevels", "zoneClusters", "zones", "activeSupports", "activeResistances", "nearestSupport", "nearestResistance", "visibleZones", "marketZoneRows", "summary", "status"],
         fvgContexts: ["available", "timeframe", "rawFvgs", "validFvgs", "activeBullish", "activeBearish", "visibleFvgs", "visibleBoundaryFvgs", "visibleBoxFvgs", "visibleRightExtendedFvgs", "hiddenFvgs", "suppressedFvgs", "marketZoneRows", "summary", "status"],
@@ -194,6 +221,7 @@
     ENGINE_PIPELINE_ORDER,
     FUTURE_ENGINE_FLAGS,
     STRUCTURE_V2_CONFIG,
+    LTF_STRUCTURE_LABEL_CONFIG,
     LIQUIDITY_V2_CONFIG,
     SR_V2_CONFIG,
     FVG_V2_CONFIG,

@@ -21,7 +21,10 @@
           ["Bias / Trend", `${context?.bias || "Neutral"} · ${context?.trendState || "Unknown"}`],
           ["Raw Pivots", context?.rawPivots?.length ?? 0],
           ["Internal / Major", `${context?.internalSwings?.length || 0} / ${context?.majorSwings?.length || 0}`],
-          ["Display Labels", context?.displaySwings?.length || context?.labels?.length || 0],
+          ["Visible Labels", context?.visibleStructureLabels?.length ?? (context?.displaySwings?.length || context?.labels?.length || 0)],
+          ["Setup / Timing Swings", `${context?.setupSwings?.length || 0} / ${context?.timingSwings?.length || 0}`],
+          ["Hidden Op / Micro", `${context?.hiddenOperationalSwings?.length || 0} / ${context?.hiddenMicroSwings?.length || 0}`],
+          ["Adaptive", context?.debugStats?.adaptive ? `VR ${Number(context.debugStats.adaptive.volatilityRatio || 0).toFixed(2)} · Th ${Number(context.debugStats.adaptive.adaptiveThreshold || 0).toFixed(2)}` : "—"],
           ["BOS / CHoCH", `${context?.bosChoch?.type || "None"} · ${context?.bosChoch?.confirmation || "None"}`],
           ["Sweep", context?.sweepStatus?.hasSweep ? `${context.sweepStatus.direction} sweep @ ${price(context.sweepStatus.sweptLevel)}` : "No sweep context"],
           ["Protected High", price(context?.protectedHigh?.price)],
@@ -41,7 +44,7 @@
   function renderPanel(container = null) {
     const data = buildPanelData();
     if (!data.length) return renderEmptyState(container);
-    const html = `<section class="compact-panel-card structure-v2-panel"><h3>Market Structure V2</h3><p class="structure-debug-note">Raw Pivot is not structure. HH/HL/LH/LL labels are assigned only after structural filters and confirmed pivot delay. Planning context only.</p><div class="structure-card-grid">${data.map((item) => `<article class="structure-card"><div class="card-label">${item.title}</div><span class="structure-layer-badge">${item.context?.role || "context"}</span><div class="compact-panel-grid">${item.rows.map(([label, value]) => `<div><span>${label}</span><strong>${value || "—"}</strong></div>`).join("")}</div><small>${item.context?.summary || "Reference only."}</small></article>`).join("")}</div></section>`;
+    const html = `<section class="compact-panel-card structure-v2-panel"><h3>Market Structure V2</h3><p class="structure-debug-note">Raw Pivot is not structure. 4H labels are setup-only; 1H micro labels are hidden by default and never drive bias. Planning context only.</p><div class="structure-card-grid">${data.map((item) => `<article class="structure-card"><div class="card-label">${item.title}</div><span class="structure-layer-badge">${item.context?.role || "context"}</span><div class="compact-panel-grid">${item.rows.map(([label, value]) => `<div><span>${label}</span><strong>${value || "—"}</strong></div>`).join("")}</div><small>${item.context?.summary || "Reference only."}</small></article>`).join("")}</div></section>`;
     if (container) container.innerHTML = html;
     return html;
   }

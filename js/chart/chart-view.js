@@ -562,19 +562,33 @@ function addDummyMarkers(closedCandles, running, timeframe) {
   if (!candleSeries) return;
   const markers = [];
   const firstVisibleTime = closedCandles[0]?.open_time ?? 0;
+  const toUnixSeconds = (value, fallbackMs) => {
+    const ms = Number(fallbackMs ?? value);
+    if (Number.isFinite(ms) && ms > 1e11) return Math.floor(ms / 1000);
+    if (Number.isFinite(ms) && ms > 0) return Math.floor(ms);
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
+  };
   const context = structureContexts[timeframe];
   if (activeLayers.Structure && context?.available) {
-    const structureLabels = context.displaySwings || context.displayLabels || context.labels || [];
+    const structureLabels = context.visibleStructureLabels || context.displaySwings || context.displayLabels || context.labels || [];
     markers.push(...structureLabels
-      .filter((label) => label.time >= firstVisibleTime)
+      .filter((label) => {
+        const seconds = toUnixSeconds(label.time, label.timeMs ?? label.open_time);
+        return seconds != null && seconds * 1000 >= firstVisibleTime;
+      })
       .slice(-28)
-      .map((label) => ({
-        time: Math.floor(label.time / 1000),
-        position: label.type === "high" ? "aboveBar" : "belowBar",
-        color: label.type === "high" ? "#38bdf8" : "#facc15",
-        shape: label.type === "high" ? "arrowDown" : "arrowUp",
-        text: label.label
-      })));
+      .map((label) => {
+        const time = toUnixSeconds(label.time, label.timeMs ?? label.open_time);
+        if (time == null) return null;
+        return {
+          time,
+          position: label.type === "high" ? "aboveBar" : "belowBar",
+          color: label.type === "high" ? "#38bdf8" : "#facc15",
+          shape: label.type === "high" ? "arrowDown" : "arrowUp",
+          text: label.displayLabel || label.microDisplayLabel || label.label
+        };
+      }).filter(Boolean));
   }
   if (running && closedCandles.length && running.open_time > closedCandles.at(-1).open_time) {
     markers.push({ time: Math.floor(running.open_time / 1000), position: "aboveBar", color: "#facc15", shape: "circle", text: `Running ${timeframe === "1W" ? "W" : timeframe}` });

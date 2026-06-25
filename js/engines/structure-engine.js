@@ -83,6 +83,13 @@
       setupOperationalSwings: [],
       timingOperationalSwings: [],
       operationalStructureLabels: [],
+      setupSwingPath: [],
+      timingSwingPath: [],
+      hiddenOperationalSwings: [],
+      hiddenMicroSwings: [],
+      visibleStructureLabels: [],
+      ltfLabelPolicy: {},
+      biasContributionSummary: { weeklyContribution: null, dailyContribution: null, fourHContribution: null, oneHContribution: null, ignoredSources: [] },
       operationalTrendState: null,
       operationalRejectedPivots: [],
       operationalReplacementEvents: [],
@@ -118,9 +125,17 @@
     };
   }
 
-  function getClosedCandlesForStructure(timeframe) {
-    const source = window.BtcDash.state?.marketData?.[timeframe] || [];
-    return source.filter((candle) => candle && !isRunningLike(candle)).map((candle, index) => ({ ...candle, _closedIndex: index }));
+  function getClosedCandlesForStructure(input) {
+    const source = Array.isArray(input) ? input : (window.BtcDash.state?.marketData?.[input] || []);
+    let rejectedRunningCount = 0;
+    let rejectedInvalidCount = 0;
+    const closedCandles = [];
+    source.forEach((candle) => {
+      if (!candle) { rejectedInvalidCount += 1; return; }
+      if (isRunningLike(candle) || candle.isPreview === true || candle.source === "running") { rejectedRunningCount += 1; return; }
+      closedCandles.push({ ...candle, _closedIndex: closedCandles.length });
+    });
+    return { closedCandles, stats: { inputCount: source.length, closedCount: closedCandles.length, rejectedRunningCount, rejectedInvalidCount } };
   }
 
   function calculateAtrSeries(candles, atrLength = 14) {
@@ -773,16 +788,161 @@
     return selected.sort((a, b) => Number(a.index || 0) - Number(b.index || 0));
   }
 
+
+  function getLtfLabelConfig(timeframe) {
+    return window.BtcDash.config?.LTF_STRUCTURE_LABEL_CONFIG?.[timeframe] || {};
+  }
+
+  function getLtfAdaptiveConfig() {
+    return window.BtcDash.config?.LTF_STRUCTURE_LABEL_CONFIG?.adaptive || {};
+  }
+
+  function calculateVolatilityRatio(atrSeries, lookbackSMA = 50) {
+    const values = (atrSeries || []).filter((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+    if (!values.length) return 1;
+    const current = values.at(-1);
+    const sample = values.slice(-lookbackSMA);
+    const sma = sample.reduce((sum, value) => sum + Number(value), 0) / Math.max(1, sample.length);
+    const cfg = getLtfAdaptiveConfig();
+    return Math.max(cfg.minVolatilityRatio ?? 0.3, Math.min(cfg.maxVolatilityRatio ?? 2.5, current / Math.max(1e-9, sma)));
+  }
+
+  function applyAdaptiveAdjustment(baseValue, volatilityRatio, adjustmentPower = 0.60) {
+    return Number(baseValue) * Math.pow(Math.max(0.01, Number(volatilityRatio) || 1), adjustmentPower);
+  }
+
+  function getAdaptiveThresholdForTimeframe(timeframe, baseThreshold, volatilityRatio, options = {}) {
+    const adaptive = getLtfAdaptiveConfig();
+    const adjusted = applyAdaptiveAdjustment(baseThreshold, volatilityRatio, adaptive.adjustmentPower ?? 0.60);
+    return Math.max(options.minMovePctFloor ?? 0, Math.min(options.minMovePctCeiling ?? Infinity, adjusted));
+  }
+
+  function getAdaptiveToleranceForDetection(timeframe, volatilityRatio, options = {}) {
+    const base = options.baseTolerancePct ?? 0.15;
+    const adjusted = applyAdaptiveAdjustment(base, volatilityRatio, (getLtfAdaptiveConfig().adjustmentPower ?? 0.60) / 2);
+    return Math.max(0.05, Math.min(0.8, adjusted));
+  }
+
+  function getAdaptiveMinBarGap(timeframe, baseMinBarGap, volatilityRatio, options = {}) {
+    const adaptive = getLtfAdaptiveConfig();
+    const adjusted = applyAdaptiveAdjustment(baseMinBarGap, volatilityRatio, adaptive.adjustmentPower ?? 0.60);
+    return Math.max(options.minLegBars ?? 1, Math.ceil(adjusted));
+  }
+
+  function buildAdaptiveMeta(candles, timeframe, rules = {}) {
+    const adaptiveCfg = getLtfAdaptiveConfig();
+    const atrSeries = calculateAtrSeries(candles, adaptiveCfg.atrLength || 14);
+    const volatilityRatio = calculateVolatilityRatio(atrSeries, adaptiveCfg.volatilitySmaLength || 50);
+    const adaptiveThreshold = getAdaptiveThresholdForTimeframe(timeframe, rules.baseMinMovePct ?? rules.minLegMovePct ?? 1, volatilityRatio, rules);
+    const adaptiveTolerance = getAdaptiveToleranceForDetection(timeframe, volatilityRatio, rules);
+    const adaptiveMinBarGap = getAdaptiveMinBarGap(timeframe, rules.minBarGap ?? rules.minLegBars ?? 4, volatilityRatio, rules);
+    return { atrSeries, volatilityRatio, adaptiveThreshold, adaptiveTolerance, adaptiveMinBarGap };
+  }
+
+  function determineDisplayLabel(swing, timeframe, sourceLayer, options = {}) {
+    if (!swing?.label) return null;
+    if (timeframe === "1W" || timeframe === "1D") return swing.label;
+    if (timeframe === "4H") {
+      if (sourceLayer === "setupSwings") return swing.label;
+      return options.showOperationalLabels ? `Op ${swing.label}` : null;
+    }
+    if (timeframe === "1H") return options.showMicroLabels ? `Micro ${swing.label}` : null;
+    return swing.label;
+  }
+
+  function canInfluenceBias(swing, timeframe, sourceLayer) {
+    if (timeframe === "1W" && sourceLayer === "majorSwings") return "macro";
+    if (timeframe === "1D" && sourceLayer === "majorSwings") return "context";
+    if (timeframe === "4H" && sourceLayer === "setupSwings") return "setupOnly";
+    return false;
+  }
+
+  function decorateLtfSwing(swing, timeframe, sourceLayer, adaptiveMeta, extra = {}) {
+    const cfg = getLtfLabelConfig(timeframe);
+    const displayCfg = cfg.display || {};
+    const displayLabel = determineDisplayLabel(swing, timeframe, sourceLayer, displayCfg);
+    const is1H = timeframe === "1H";
+    return {
+      ...swing,
+      sourceLayer,
+      layer: sourceLayer,
+      layerType: sourceLayer === "setupSwings" ? "setup_structure" : "micro_timing",
+      isSetup: sourceLayer === "setupSwings",
+      isOperational: sourceLayer !== "setupSwings",
+      isMicro: is1H,
+      timingOnly: is1H,
+      displayLabel,
+      microDisplayLabel: is1H && swing.label ? `Micro ${swing.label}` : null,
+      isHidden: !displayLabel,
+      canInfluenceBias: canInfluenceBias(swing, timeframe, sourceLayer) !== false,
+      canInfluenceSetupContext: timeframe === "4H" && sourceLayer === "setupSwings",
+      canConfirmDailyContext: timeframe === "4H" && sourceLayer === "setupSwings",
+      canOverrideWeeklyBias: false,
+      canOverrideDailyBias: false,
+      canOverride4hBias: false,
+      canSetGlobalBias: false,
+      biasContributionType: timeframe === "4H" ? "setupOnly" : "none",
+      adaptiveMeta: { volatilityRatio: adaptiveMeta.volatilityRatio, adaptiveThreshold: adaptiveMeta.adaptiveThreshold, adaptiveMinBarGap: adaptiveMeta.adaptiveMinBarGap, adaptiveTolerance: adaptiveMeta.adaptiveTolerance },
+      validationFactors: extra.validationFactors || [],
+      timingUseCases: is1H ? ["sweep", "weakBreak", "retest", "reclaim", "failedBreak", "microReaction"] : undefined
+    };
+  }
+
+  function filterSetupSwings({ operationalSwings = [], internalSwings = [], closedCandles = [], timeframe = "4H", volatilityRatio = 1, adaptiveThreshold = 1.8, adaptiveMinBarGap = 10, adaptiveTolerance = 0.15 }) {
+    if (timeframe !== "4H") return [];
+    const rules = getLtfLabelConfig("4H").setupSwingRules || {};
+    const source = (internalSwings.length ? internalSwings : operationalSwings).filter((swing) => swing?.isConfirmed !== false && swing?.canBeAnalysisSource !== false && swing?.structureType !== "rawPivot" && swing?.layer !== "rawPivot");
+    const classified = classifyStructureSwingsV2(buildHierarchySwings(source, timeframe, "setup", { minLegBars: rules.minLegBars || 8, minLegMovePct: adaptiveThreshold, minAtrMove: rules.minAtrMove || 1.4, maxSetupSwings: 24 }), null, timeframe, "setup", { hierarchy: "setup" });
+    return classified.filter((swing, index, arr) => {
+      const previous = arr[index - 1];
+      if (!previous) return true;
+      const barGap = Math.abs(Number(swing.index ?? swing.barIndex ?? 0) - Number(previous.index ?? previous.barIndex ?? 0));
+      const movePct = previous.price ? Math.abs(swing.price - previous.price) / previous.price * 100 : adaptiveThreshold;
+      return barGap >= adaptiveMinBarGap && movePct + adaptiveTolerance >= adaptiveThreshold;
+    }).map((swing) => decorateLtfSwing(swing, timeframe, "setupSwings", { volatilityRatio, adaptiveThreshold, adaptiveMinBarGap, adaptiveTolerance }, { validationFactors: ["confirmedSwing", "adaptiveMove", "minBarGap", "setupOnly"] }));
+  }
+
+  function buildAdaptiveTimingSwings({ internalSwings = [], operationalSwings = [], timeframe = "1H", volatilityRatio = 1, adaptiveThreshold = 0.8, adaptiveMinBarGap = 12, adaptiveTolerance = 0.1 }) {
+    if (timeframe !== "1H") return [];
+    const rules = getLtfLabelConfig("1H").timingSwingRules || {};
+    const source = (internalSwings.length ? internalSwings : operationalSwings).filter((swing) => swing?.isConfirmed !== false && swing?.structureType !== "rawPivot" && swing?.layer !== "rawPivot");
+    const classified = classifyStructureSwingsV2(buildHierarchySwings(source, timeframe, "timing", { minLegBars: rules.minLegBars || 10, minLegMovePct: adaptiveThreshold, minAtrMove: rules.minAtrMove || 1.1, maxTimingSwings: 30 }), null, timeframe, "timing", { hierarchy: "timing" });
+    return classified.filter((swing, index, arr) => {
+      const previous = arr[index - 1];
+      if (!previous) return true;
+      const barGap = Math.abs(Number(swing.index ?? swing.barIndex ?? 0) - Number(previous.index ?? previous.barIndex ?? 0));
+      const movePct = previous.price ? Math.abs(swing.price - previous.price) / previous.price * 100 : adaptiveThreshold;
+      return barGap >= adaptiveMinBarGap && movePct + adaptiveTolerance >= adaptiveThreshold;
+    }).map((swing) => decorateLtfSwing(swing, timeframe, "timingSwings", { volatilityRatio, adaptiveThreshold, adaptiveMinBarGap, adaptiveTolerance }));
+  }
+
+  function buildBiasContributionSummary(timeframe, analysisSource, analysisSwings = [], hiddenOperationalSwings = [], hiddenMicroSwings = []) {
+    return {
+      weeklyContribution: timeframe === "1W" ? "macro" : null,
+      dailyContribution: timeframe === "1D" ? "context" : null,
+      fourHContribution: timeframe === "4H" && analysisSource === "setupSwings" ? "setupOnly" : null,
+      oneHContribution: timeframe === "1H" ? false : null,
+      ignoredSources: [
+        ...(timeframe === "4H" ? hiddenOperationalSwings.map((swing) => swing.id) : []),
+        ...(timeframe === "1H" ? hiddenMicroSwings.map((swing) => swing.id) : []),
+        ...analysisSwings.filter((swing) => canInfluenceBias(swing, timeframe, swing.sourceLayer) === false).map((swing) => swing.id)
+      ]
+    };
+  }
+
   function buildDisplaySwings(analysisSwings, timeframe) {
     return buildCleanDisplaySwings(analysisSwings, timeframe);
   }
 
   function rebuildStructureForTimeframe(timeframe, options = {}) {
     try {
-      const candles = getClosedCandlesForStructure(timeframe);
+      const closedResult = getClosedCandlesForStructure(timeframe);
+      const candles = closedResult.closedCandles;
+      const closedStats = closedResult.stats;
       const { tf } = getConfig(timeframe);
       if (!candles.length || candles.length < Math.max((tf.pivotLeft || 4) + (tf.pivotRight || 4) + 5, 20)) {
         const empty = createEmptyStructureContext(timeframe, "Not enough closed candles for Structure V2.");
+        empty.debugStats = { closedCandleCount: closedStats.closedCount, rejectedRunningCandleCount: closedStats.rejectedRunningCount, rejectedInvalidCount: closedStats.rejectedInvalidCount };
         window.BtcDash.state.structureContexts[timeframe] = empty;
         try { structureContexts[timeframe] = empty; } catch (error) { /* ignore lexical fallback */ }
         return empty;
@@ -790,27 +950,28 @@
       const rawPivots = detectRawPivots(candles, timeframe);
       const promoted = promotePivotsToStructure(rawPivots, candles, timeframe);
       const role = getRole(timeframe);
+      const ltfCfg = getLtfLabelConfig(timeframe);
+      const rules = timeframe === "4H" ? (ltfCfg.setupSwingRules || {}) : timeframe === "1H" ? (ltfCfg.timingSwingRules || {}) : {};
+      const adaptive = buildAdaptiveMeta(candles, timeframe, { baseMinMovePct: rules.baseMinMovePct || rules.minLegMovePct || 1, minMovePctFloor: rules.minMovePctFloor, minMovePctCeiling: rules.minMovePctCeiling, minBarGap: rules.minBarGap, minLegBars: rules.minLegBars, baseTolerancePct: rules.baseTolerancePct });
       const candidateSwings = [...promoted.majorSwings, ...promoted.internalSwings].sort((a, b) => Number(a.index) - Number(b.index));
       const zigzagSwings = candidateSwings;
       const validLegSwings = promoted.majorSwings.length ? promoted.majorSwings : promoted.internalSwings;
-      const setupSwings = buildSetupSwings(promoted.majorSwings, validLegSwings, timeframe);
-      const timingSwings = buildTimingSwings(promoted.internalSwings, timeframe);
+      const legacySetupSwings = buildSetupSwings(promoted.majorSwings, validLegSwings, timeframe);
+      const legacyTimingSwings = buildTimingSwings(promoted.internalSwings, timeframe);
       const operational = (timeframe === "4H" || timeframe === "1H") ? buildOperationalStructure(candles, timeframe) : { confirmedOperationalPivots: [], operationalSwingPath: [], operationalStructureLabels: [], operationalRejectedPivots: [], operationalReplacementEvents: [], operationalContinuityRescues: [], operationalWarnings: [] };
-      const setupOperationalSwings = timeframe === "4H" ? operational.operationalStructureLabels : [];
-      const timingOperationalSwings = timeframe === "1H" ? operational.operationalStructureLabels : [];
+      const hiddenOperationalSwings = timeframe === "4H" ? (operational.operationalStructureLabels || []).map((swing) => decorateLtfSwing(swing, timeframe, "operationalSwings", adaptive)) : [];
+      const hiddenMicroSwings = timeframe === "1H" ? (operational.operationalStructureLabels || []).map((swing) => decorateLtfSwing(swing, timeframe, "timingSwings", adaptive)) : [];
+      const setupSwings = timeframe === "4H" ? (filterSetupSwings({ operationalSwings: operational.operationalStructureLabels, internalSwings: promoted.internalSwings, closedCandles: candles, timeframe, volatilityRatio: adaptive.volatilityRatio, adaptiveThreshold: adaptive.adaptiveThreshold, adaptiveMinBarGap: adaptive.adaptiveMinBarGap, adaptiveTolerance: adaptive.adaptiveTolerance }).length ? filterSetupSwings({ operationalSwings: operational.operationalStructureLabels, internalSwings: promoted.internalSwings, closedCandles: candles, timeframe, volatilityRatio: adaptive.volatilityRatio, adaptiveThreshold: adaptive.adaptiveThreshold, adaptiveMinBarGap: adaptive.adaptiveMinBarGap, adaptiveTolerance: adaptive.adaptiveTolerance }) : legacySetupSwings.map((swing) => decorateLtfSwing(swing, timeframe, "setupSwings", adaptive))) : legacySetupSwings;
+      const timingSwings = timeframe === "1H" ? (buildAdaptiveTimingSwings({ internalSwings: promoted.internalSwings, operationalSwings: operational.operationalStructureLabels, closedCandles: candles, timeframe, volatilityRatio: adaptive.volatilityRatio, adaptiveThreshold: adaptive.adaptiveThreshold, adaptiveMinBarGap: adaptive.adaptiveMinBarGap, adaptiveTolerance: adaptive.adaptiveTolerance }).length ? buildAdaptiveTimingSwings({ internalSwings: promoted.internalSwings, operationalSwings: operational.operationalStructureLabels, closedCandles: candles, timeframe, volatilityRatio: adaptive.volatilityRatio, adaptiveThreshold: adaptive.adaptiveThreshold, adaptiveMinBarGap: adaptive.adaptiveMinBarGap, adaptiveTolerance: adaptive.adaptiveTolerance }) : legacyTimingSwings.map((swing) => decorateLtfSwing(swing, timeframe, "timingSwings", adaptive))) : legacyTimingSwings;
+      const setupOperationalSwings = timeframe === "4H" ? hiddenOperationalSwings : [];
+      const timingOperationalSwings = timeframe === "1H" ? hiddenMicroSwings : [];
       let primary = [];
       let analysisSource = "majorSwings";
       if (role === "macro" || role === "context") { primary = promoted.majorSwings; analysisSource = "majorSwings"; }
-      else if (role === "setup") {
-        primary = setupOperationalSwings.length >= 3 ? setupOperationalSwings : (setupSwings.length ? setupSwings : promoted.majorSwings);
-        analysisSource = setupOperationalSwings.length >= 3 ? "setupOperationalSwings" : (setupSwings.length ? "setupSwings" : "majorSwings");
-      }
-      else {
-        primary = timingOperationalSwings.length >= 3 ? timingOperationalSwings : (timingSwings.length ? timingSwings : classifyStructureSwingsV2((promoted.internalSwings || []).map((swing) => cloneSwingForHierarchy(swing, "timing", "Timing fallback from filtered internal swing.")), null, timeframe, role, { hierarchy: "timing" }));
-        analysisSource = timingOperationalSwings.length >= 3 ? "timingOperationalSwings" : "timingSwings";
-      }
+      else if (role === "setup") { primary = setupSwings.length ? setupSwings : promoted.majorSwings; analysisSource = setupSwings.length ? "setupSwings" : "majorSwings"; }
+      else { primary = timingSwings.length ? timingSwings : []; analysisSource = "timingSwings"; }
       if (!primary.length) {
-        const empty = createEmptyStructureContext(timeframe, "Raw pivots found but no valid structural swing passed V2 filters.");
+        const empty = createEmptyStructureContext(timeframe, "Raw pivots found but no valid structural swing passed V2.1-R3 filters.");
         empty.rawPivots = rawPivots;
         empty.candidateSwings = candidateSwings;
         empty.zigzagSwings = zigzagSwings;
@@ -821,36 +982,37 @@
         empty.operationalSwingPath = operational.operationalSwingPath;
         empty.setupOperationalSwings = setupOperationalSwings;
         empty.timingOperationalSwings = timingOperationalSwings;
-        empty.operationalStructureLabels = operational.operationalStructureLabels;
-        empty.operationalRejectedPivots = operational.operationalRejectedPivots;
-        empty.operationalReplacementEvents = operational.operationalReplacementEvents;
-        empty.operationalContinuityRescues = operational.operationalContinuityRescues;
-        empty.operationalWarnings = operational.operationalWarnings;
+        empty.hiddenOperationalSwings = hiddenOperationalSwings;
+        empty.hiddenMicroSwings = hiddenMicroSwings;
         empty.analysisSource = analysisSource;
         empty.displaySource = analysisSource;
-        empty.classificationWarnings = ["No primary hierarchy swings available."];
-        empty.debugStats = promoted.debugStats;
+        empty.ltfLabelPolicy = ltfCfg;
+        empty.debugStats = { ...promoted.debugStats, adaptive, closedCandleCount: closedStats.closedCount, rejectedRunningCandleCount: closedStats.rejectedRunningCount, rejectedInvalidCount: closedStats.rejectedInvalidCount };
         window.BtcDash.state.structureContexts[timeframe] = empty;
         try { structureContexts[timeframe] = empty; } catch (error) { /* ignore lexical fallback */ }
         return empty;
       }
-      const usesOperational = analysisSource === "setupOperationalSwings" || analysisSource === "timingOperationalSwings";
-      primary = usesOperational ? primary : classifyStructureSwingsV2(primary, null, timeframe, role, { hierarchy: role === "setup" ? "setup" : role === "timing" ? "timing" : "major" });
-      const operationalTrendState = usesOperational ? deriveOperationalTrendState(primary, timeframe, role, getOperationalSwingConfig(timeframe)) : null;
-      const protectedLevels = usesOperational ? resolveOperationalProtectedLevels(primary, timeframe, role, operationalTrendState) : resolveProtectedLevelsV2(primary, timeframe, role, candles, tf);
-      const operationalBosChoch = usesOperational ? resolveOperationalBosChoch(candles, primary, timeframe, role, getOperationalSwingConfig(timeframe)) : null;
-      const bosChoch = operationalBosChoch || deriveBosChochState(candles, primary, timeframe, protectedLevels);
+      const needsClassification = !(timeframe === "4H" && analysisSource === "setupSwings") && !(timeframe === "1H" && analysisSource === "timingSwings");
+      primary = needsClassification ? classifyStructureSwingsV2(primary, null, timeframe, role, { hierarchy: role === "setup" ? "setup" : role === "timing" ? "timing" : "major" }) : primary;
+      primary = primary.map((swing) => (timeframe === "4H" ? decorateLtfSwing(swing, timeframe, analysisSource, adaptive) : timeframe === "1H" ? decorateLtfSwing(swing, timeframe, "timingSwings", adaptive) : swing));
+      const protectedLevels = timeframe === "1H" ? resolveProtectedLevelsV2(primary, timeframe, role, candles, tf) : resolveProtectedLevelsV2(primary, timeframe, role, candles, tf);
+      const bosChoch = deriveBosChochState(candles, primary, timeframe, protectedLevels);
       const sweepStatus = deriveSweepStatus(candles, primary, timeframe, protectedLevels);
-      const bias = deriveStructureBias({ timeframe, role, analysisSwings: primary, bosChoch, sweepStatus, protectedLevels });
-      if (usesOperational && operationalTrendState?.label) {
-        bias.trendState = operationalTrendState.label;
-        bias.status = operationalTrendState.label;
-        bias.setupState = role === "setup" ? operationalTrendState.label : bias.setupState;
-        bias.timingState = role === "timing" ? operationalTrendState.label : bias.timingState;
+      let bias = deriveStructureBias({ timeframe, role, analysisSwings: primary, bosChoch, sweepStatus, protectedLevels });
+      if (timeframe === "4H") {
+        bias = { ...bias, canOverrideHtf: false, summary: `${timeframe} setup-only structure: ${bias.trendState}. 4H maps setup context and does not override Weekly/Daily bias. ${bosChoch.note || "Reference only."}` };
       }
-      const displaySwings = usesOperational ? primary.slice(-(getOperationalSwingConfig(timeframe).displayMaxSwings || primary.length)) : buildDisplaySwings(primary, timeframe);
-      const displaySource = analysisSource;
+      if (timeframe === "1H") {
+        bias = { ...bias, bias: "Timing Only", trendState: sweepStatus.hasSweep ? "Sweep Reaction Timing" : "Micro Timing Context", status: sweepStatus.hasSweep ? "Sweep Reaction Timing" : "Timing only", setupState: "Timing only", timingState: sweepStatus.hasSweep ? "Sweep Reaction Timing" : "Timing only", canOverrideHtf: false, summary: `${timeframe} timing-only micro structure. 1H does not influence Weekly/Daily/4H bias. ${sweepStatus.note || "Reference only."}` };
+      }
+      let displaySwings = [];
+      if (timeframe === "4H") displaySwings = buildCleanDisplaySwings(primary.filter((swing) => swing.sourceLayer === "setupSwings"), timeframe).slice(-(ltfCfg.display?.maxVisibleSetupLabels || 10)).map((swing) => ({ ...swing, displayLabel: swing.displayLabel || swing.label, label: swing.displayLabel || swing.label }));
+      else if (timeframe === "1H") displaySwings = (ltfCfg.display?.showMicroLabels ? primary.slice(-(ltfCfg.display?.maxVisibleMicroLabels || 0)).map((swing) => ({ ...swing, label: swing.microDisplayLabel, displayLabel: swing.microDisplayLabel })) : []);
+      else displaySwings = buildDisplaySwings(primary, timeframe);
+      const visibleStructureLabels = displaySwings.filter((swing) => swing?.displayLabel || swing?.label);
+      const displaySource = timeframe === "4H" ? "setupSwings" : timeframe === "1H" ? "timingSwingsHidden" : analysisSource;
       const classificationWarnings = primary.filter((swing) => ["HH", "HL", "LH", "LL"].includes(swing.label) && (!swing.comparedTo || !swing.classificationReason)).map((swing) => `${swing.id} missing comparison metadata`);
+      const biasContributionSummary = buildBiasContributionSummary(timeframe, analysisSource, primary, hiddenOperationalSwings, hiddenMicroSwings);
       const context = {
         available: true,
         timeframe,
@@ -867,12 +1029,19 @@
         operationalSwingPath: operational.operationalSwingPath,
         setupOperationalSwings,
         timingOperationalSwings,
-        operationalStructureLabels: primary,
-        operationalTrendState,
+        operationalStructureLabels: timeframe === "4H" ? hiddenOperationalSwings : timeframe === "1H" ? hiddenMicroSwings : [],
+        setupSwingPath: timeframe === "4H" ? setupSwings : [],
+        timingSwingPath: timeframe === "1H" ? timingSwings : [],
+        hiddenOperationalSwings,
+        hiddenMicroSwings,
+        visibleStructureLabels,
+        ltfLabelPolicy: ltfCfg,
+        biasContributionSummary,
+        operationalTrendState: null,
         operationalRejectedPivots: operational.operationalRejectedPivots,
         operationalReplacementEvents: operational.operationalReplacementEvents,
         operationalContinuityRescues: operational.operationalContinuityRescues,
-        operationalBosChoch,
+        operationalBosChoch: null,
         operationalWarnings: operational.operationalWarnings,
         timingOnly: role === "timing",
         structuralSwings: promoted.structuralSwings,
@@ -890,11 +1059,11 @@
         status: bias.status,
         setupState: bias.setupState,
         timingState: bias.timingState,
-        canOverrideHtf: bias.canOverrideHtf,
+        canOverrideHtf: false,
         bosChoch,
         sweepStatus,
-        sequence: primary.map((swing) => swing.label).filter(Boolean),
-        debugStats: { ...promoted.debugStats, rawPivotCount: rawPivots.length, internalSwingCount: promoted.internalSwings.length, majorSwingCount: promoted.majorSwings.length, displayedLabelCount: displaySwings.length, setupSwingCount: setupSwings.length, timingSwingCount: timingSwings.length, operationalSwingCount: operational.operationalSwingPath.length, operationalRejectedPivotCount: operational.operationalRejectedPivots.length, operationalReplacementCount: operational.operationalReplacementEvents.length, operationalContinuityRescueCount: operational.operationalContinuityRescues.length, analysisSource, displaySource, analysisSwingCount: primary.length, displaySwingCount: displaySwings.length, hiddenDisplaySwingCount: Math.max(0, primary.length - displaySwings.length), displayFilterReason: "Clean display swings prioritize valid HH/HL/LH/LL, spacing, move size, and recency.", reason: options.reason || null },
+        sequence: primary.map((swing) => timeframe === "1H" ? swing.microDisplayLabel : (swing.displayLabel || swing.label)).filter(Boolean),
+        debugStats: { ...promoted.debugStats, rawPivotCount: rawPivots.length, internalSwingCount: promoted.internalSwings.length, majorSwingCount: promoted.majorSwings.length, displayedLabelCount: displaySwings.length, setupSwingCount: setupSwings.length, timingSwingCount: timingSwings.length, operationalSwingCount: operational.operationalSwingPath.length, operationalRejectedPivotCount: operational.operationalRejectedPivots.length, operationalReplacementCount: operational.operationalReplacementEvents.length, operationalContinuityRescueCount: operational.operationalContinuityRescues.length, analysisSource, displaySource, analysisSwingCount: primary.length, displaySwingCount: displaySwings.length, hiddenDisplaySwingCount: Math.max(0, primary.length - displaySwings.length), visibleMainLabelCount: visibleStructureLabels.length, hiddenOperationalLabelCount: hiddenOperationalSwings.length, hiddenMicroLabelCount: hiddenMicroSwings.length, biasIgnored1hCount: timeframe === "1H" ? primary.length : 0, biasIgnored4hOperationalCount: timeframe === "4H" ? hiddenOperationalSwings.length : 0, closedCandleCount: closedStats.closedCount, rejectedRunningCandleCount: closedStats.rejectedRunningCount, rejectedInvalidCount: closedStats.rejectedInvalidCount, adaptive: { volatilityRatio: adaptive.volatilityRatio, adaptiveThreshold: adaptive.adaptiveThreshold, adaptiveTolerance: adaptive.adaptiveTolerance, adaptiveMinBarGap: adaptive.adaptiveMinBarGap, closedCandleCount: closedStats.closedCount, rejectedRunningCandleCount: closedStats.rejectedRunningCount, setupSwingCount: setupSwings.length, timingSwingCount: timingSwings.length, visibleMainLabelCount: visibleStructureLabels.length, hiddenOperationalLabelCount: hiddenOperationalSwings.length, hiddenMicroLabelCount: hiddenMicroSwings.length, biasIgnored1hCount: timeframe === "1H" ? primary.length : 0, biasIgnored4hOperationalCount: timeframe === "4H" ? hiddenOperationalSwings.length : 0, warnings: [...(operational.operationalWarnings || []), ...classificationWarnings] }, displayFilterReason: "V2.1-R3: 4H displays setupSwings only; 1H micro labels hidden by default.", reason: options.reason || null },
         summary: bias.summary,
         note: "Planning context only. Raw Pivot is not structure."
       };
@@ -1013,6 +1182,31 @@
     };
   }
 
+  function debugAdaptiveMetrics(timeframe = "4H") {
+    const ctx = getStructureContext(timeframe);
+    const adaptive = ctx.debugStats?.adaptive || {};
+    return {
+      timeframe,
+      role: ctx.role,
+      analysisSource: ctx.analysisSource,
+      displaySource: ctx.displaySource,
+      volatilityRatio: adaptive.volatilityRatio ?? null,
+      adaptiveThreshold: adaptive.adaptiveThreshold ?? null,
+      adaptiveTolerance: adaptive.adaptiveTolerance ?? null,
+      adaptiveMinBarGap: adaptive.adaptiveMinBarGap ?? null,
+      closedCandleCount: adaptive.closedCandleCount ?? ctx.debugStats?.closedCandleCount ?? 0,
+      rejectedRunningCandleCount: adaptive.rejectedRunningCandleCount ?? ctx.debugStats?.rejectedRunningCandleCount ?? 0,
+      setupSwingCount: adaptive.setupSwingCount ?? ctx.setupSwings?.length ?? 0,
+      timingSwingCount: adaptive.timingSwingCount ?? ctx.timingSwings?.length ?? 0,
+      visibleMainLabelCount: adaptive.visibleMainLabelCount ?? ctx.visibleStructureLabels?.length ?? 0,
+      hiddenOperationalLabelCount: adaptive.hiddenOperationalLabelCount ?? ctx.hiddenOperationalSwings?.length ?? 0,
+      hiddenMicroLabelCount: adaptive.hiddenMicroLabelCount ?? ctx.hiddenMicroSwings?.length ?? 0,
+      biasIgnored1hCount: adaptive.biasIgnored1hCount ?? 0,
+      biasIgnored4hOperationalCount: adaptive.biasIgnored4hOperationalCount ?? 0,
+      warnings: adaptive.warnings || []
+    };
+  }
+
   function printStructureSwings(timeframe = "4H", key = "analysisSwings") {
     const rows = getStructureContext(timeframe)?.[key] || [];
     const table = rows.map((swing) => ({ id: swing.id, type: swing.type, label: swing.label, hierarchy: swing.hierarchy, price: swing.price, time: swing.time, comparedTo: swing.comparedTo, reason: swing.classificationReason }));
@@ -1043,6 +1237,15 @@
     printOperationalStructureLabels,
     debugStructureClassification,
     printStructureSwings,
+    debugAdaptiveMetrics,
+    getClosedCandlesForStructure,
+    calculateVolatilityRatio,
+    applyAdaptiveAdjustment,
+    getAdaptiveThresholdForTimeframe,
+    getAdaptiveToleranceForDetection,
+    getAdaptiveMinBarGap,
+    determineDisplayLabel,
+    canInfluenceBias,
     getStructureContext,
     getStructuralSourceSwings,
     rebuildAllStructureContexts: rebuildStructureContexts,
@@ -1063,4 +1266,5 @@
   window.BtcDash.printOperationalStructureLabels = printOperationalStructureLabels;
   window.BtcDash.debugStructureClassification = debugStructureClassification;
   window.BtcDash.printStructureSwings = printStructureSwings;
+  window.BtcDash.debugAdaptiveMetrics = debugAdaptiveMetrics;
 })();
