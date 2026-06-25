@@ -87,6 +87,29 @@
     }
   };
 
+  const STRUCTURE_VISIBLE_LABEL_CONFIG = {
+    enabled: true,
+    "4H": {
+      enabled: true,
+      source: "setupSwingPath",
+      softMinLabels: 8,
+      softMaxLabels: 14,
+      hardMaxLabels: 18,
+      minIndexSpacing: 8,
+      preferRecent: true,
+      keepMostRecentSwings: 4,
+      keepExtremeHighLow: true,
+      keepMajorMovePctFloor: 3.0,
+      keepMajorAtrMoveFloor: 2.0,
+      suppressSidewaysCluster: true,
+      renderSource: "intentional_density_selector"
+    },
+    "1H": {
+      enabled: true,
+      defaultHidden: true
+    }
+  };
+
 
   const LIQUIDITY_V2_CONFIG = {
     enabled: true,
@@ -222,6 +245,7 @@
     FUTURE_ENGINE_FLAGS,
     STRUCTURE_V2_CONFIG,
     LTF_STRUCTURE_LABEL_CONFIG,
+    STRUCTURE_VISIBLE_LABEL_CONFIG,
     LIQUIDITY_V2_CONFIG,
     SR_V2_CONFIG,
     FVG_V2_CONFIG,

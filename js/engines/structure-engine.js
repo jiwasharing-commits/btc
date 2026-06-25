@@ -967,17 +967,107 @@
       && Boolean(swing.displayLabel);
   }
 
+  function getStructureVisibleLabelConfig(timeframe) {
+    return window.BtcDash.config?.STRUCTURE_VISIBLE_LABEL_CONFIG?.[timeframe] || {};
+  }
+
+  function getSwingIndexValue(swing) {
+    const value = Number(swing?.index ?? swing?.barIndex ?? swing?._closedIndex ?? 0);
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function buildVisibleLabelCandidate(swing, index, all, cfg) {
+    const movePct = Number(swing.movePct ?? swing.movePercent ?? swing.moveFromPreviousPct ?? swing.differencePct ?? 0);
+    const atrMove = Number(swing.atrMove ?? swing.moveFromPreviousAtr ?? 0);
+    const highestHigh = Math.max(...all.filter((item) => item.type === "high").map((item) => Number(item.price)));
+    const lowestLow = Math.min(...all.filter((item) => item.type === "low").map((item) => Number(item.price)));
+    const isRecent = index >= Math.max(0, all.length - (cfg.keepMostRecentSwings || 4));
+    const isExtreme = (swing.type === "high" && Number(swing.price) === highestHigh) || (swing.type === "low" && Number(swing.price) === lowestLow);
+    const reasons = [];
+    let score = 0;
+    if (movePct >= (cfg.keepMajorMovePctFloor || 3)) { score += 3; reasons.push("major_move_pct"); }
+    if (atrMove >= (cfg.keepMajorAtrMoveFloor || 2)) { score += 3; reasons.push("major_atr_move"); }
+    if (swing.label === "HH" || swing.label === "LL") { score += 2; reasons.push("hh_ll_importance"); }
+    if (swing.label === "HL" || swing.label === "LH") { score += 1; reasons.push("hl_lh_context"); }
+    if (isRecent) { score += 2; reasons.push("recent_structure"); }
+    if (isExtreme) { score += 2; reasons.push("range_extreme"); }
+    if ((swing.validationFactors || []).length) { score += 1; reasons.push("validated_setup"); }
+    return {
+      ...swing,
+      normalizedMovePct: Number.isFinite(movePct) ? movePct : 0,
+      normalizedAtrMove: Number.isFinite(atrMove) ? atrMove : 0,
+      structureImportanceScore: score,
+      visibleSelectionScore: score,
+      visibleSelectionReasons: reasons,
+      _selectorIndex: getSwingIndexValue(swing)
+    };
+  }
+
+  function selectVisibleStructureLabels(timeframe, structureContext, options = {}) {
+    const ctx = structureContext || getStructureContext(timeframe) || {};
+    if (timeframe !== "4H") {
+      const labels = getRenderableStructureLabels(timeframe, ctx, options);
+      return { visibleLabels: labels, hiddenLabels: [], diagnostics: { renderSource: "existingCompatibleRender" } };
+    }
+    const cfg = { ...(getStructureVisibleLabelConfig("4H") || {}), ...(options || {}) };
+    const source = (ctx.setupSwingPath?.length ? ctx.setupSwingPath : (ctx.setupSwings?.length ? ctx.setupSwings : (ctx.visibleStructureLabels || [])));
+    const candidates = uniqueStructureLabels(source).filter(isSetupRenderableLabel);
+    if (!cfg.enabled) return { visibleLabels: candidates, hiddenLabels: [], diagnostics: { renderSource: "selector_disabled" } };
+    const ranked = candidates.map((swing, index, all) => buildVisibleLabelCandidate(swing, index, all, cfg));
+    const hardMax = Math.max(1, cfg.hardMaxLabels || 18);
+    const softMax = Math.min(hardMax, Math.max(1, cfg.softMaxLabels || 14));
+    const minSpacing = Math.max(0, cfg.minIndexSpacing || 8);
+    const selected = [];
+    const selectedIds = new Set();
+    const keep = (candidate, reason) => {
+      if (!candidate || selectedIds.has(candidate.id)) return;
+      selected.push({ ...candidate, visibleSelected: true, hiddenFromDisplay: false, visibleSelectionReasons: uniqueStructureLabels([{ id: reason }, ...(candidate.visibleSelectionReasons || []).map((item) => ({ id: item }))]).map((item) => item.id) });
+      selectedIds.add(candidate.id);
+    };
+    ranked.slice(-(cfg.keepMostRecentSwings || 4)).forEach((candidate) => keep(candidate, "always_keep_recent"));
+    if (cfg.keepExtremeHighLow) {
+      keep(ranked.filter((item) => item.type === "high").sort((a, b) => Number(b.price) - Number(a.price))[0], "always_keep_highest_high");
+      keep(ranked.filter((item) => item.type === "low").sort((a, b) => Number(a.price) - Number(b.price))[0], "always_keep_lowest_low");
+    }
+    ranked.filter((candidate) => candidate.normalizedMovePct >= (cfg.keepMajorMovePctFloor || 3) || candidate.normalizedAtrMove >= (cfg.keepMajorAtrMoveFloor || 2) || candidate.label === "HH" || candidate.label === "LL")
+      .sort((a, b) => b.visibleSelectionScore - a.visibleSelectionScore)
+      .forEach((candidate) => { if (selected.length < hardMax) keep(candidate, "important_structure"); });
+    ranked.filter((candidate) => !selectedIds.has(candidate.id))
+      .sort((a, b) => b.visibleSelectionScore - a.visibleSelectionScore || getSwingIndexValue(b) - getSwingIndexValue(a))
+      .forEach((candidate) => {
+        if (selected.length >= softMax) return;
+        const tooClose = selected.some((item) => Math.abs(candidate._selectorIndex - item._selectorIndex) < minSpacing);
+        if (!tooClose) keep(candidate, "score_spacing_pass");
+      });
+    const visibleLabels = selected.slice(0, hardMax).sort((a, b) => getSwingIndexValue(a) - getSwingIndexValue(b)).map(({ _selectorIndex, ...item }) => item);
+    const visibleIds = new Set(visibleLabels.map((item) => item.id));
+    const hiddenLabels = ranked.filter((candidate) => !visibleIds.has(candidate.id)).map(({ _selectorIndex, ...candidate }) => {
+      const nearSelected = visibleLabels.some((item) => Math.abs(getSwingIndexValue(candidate) - getSwingIndexValue(item)) < minSpacing);
+      const hiddenReason = nearSelected ? "spacing_cluster" : selected.length >= softMax ? "density_limit" : "lower_importance";
+      return { ...candidate, hiddenFromDisplay: true, visibleSelected: false, hiddenReason };
+    });
+    return {
+      visibleLabels,
+      hiddenLabels,
+      diagnostics: {
+        renderSource: cfg.renderSource || "intentional_density_selector",
+        hiddenReasonCounts: hiddenLabels.reduce((acc, item) => { acc[item.hiddenReason] = (acc[item.hiddenReason] || 0) + 1; return acc; }, {}),
+        visibleSelectionScoreRange: {
+          min: visibleLabels.length ? Math.min(...visibleLabels.map((item) => item.visibleSelectionScore || 0)) : null,
+          max: visibleLabels.length ? Math.max(...visibleLabels.map((item) => item.visibleSelectionScore || 0)) : null
+        },
+        significantGapThreshold: cfg.significantGapThreshold || 5
+      }
+    };
+  }
+
   function getRenderableStructureLabels(timeframe, structureContext, options = {}) {
     const ctx = structureContext || getStructureContext(timeframe) || {};
     if (timeframe === "4H") {
-      const setupSource = [
-        ...(ctx.visibleStructureLabels || []),
-        ...(ctx.setupSwingPath || []),
-        ...(ctx.setupSwings || [])
-      ];
-      return uniqueStructureLabels(setupSource)
+      const source = ctx.visibleStructureLabels?.length ? ctx.visibleStructureLabels : selectVisibleStructureLabels(timeframe, ctx, options).visibleLabels;
+      return uniqueStructureLabels(source)
         .filter(isSetupRenderableLabel)
-        .map((swing) => ({ ...swing, displayLabel: swing.displayLabel || swing.label, renderSource: "setupSwingsOnly" }));
+        .map((swing) => ({ ...swing, displayLabel: swing.displayLabel || swing.label, renderSource: swing.renderSource || "intentional_density_selector" }));
     }
     if (timeframe === "1H") {
       const cfg = getLtfLabelConfig("1H");
@@ -1052,7 +1142,7 @@
       timeframe: "4H",
       mode: "diagnostic_only",
       logicChanged: false,
-      counts: { operationalSwingPath: 0, setupSwingPath: 0, visibleStructureLabels: 0, displaySwings: 0, labels: 0, renderableLabels: 0 },
+      counts: { operationalSwingPath: 0, setupSwingPath: 0, visibleStructureLabels: 0, hiddenStructureLabels: 0, displaySwings: 0, labels: 0, renderableLabels: 0 },
       thresholds: {
         minLegBars: rules.minLegBars ?? null,
         minBarGap: rules.minBarGap ?? null,
@@ -1155,27 +1245,69 @@
     setupSwingDiagnostics.rejectedSwings.forEach((item) => { byReason[item.reason] = (byReason[item.reason] || 0) + 1; });
     setupSwingDiagnostics.rejectedSummary.byReason = byReason;
     setupSwingDiagnostics.rejectedSummary.totalRejected = setupSwingDiagnostics.rejectedSwings.length;
-    setupSwingDiagnostics.rejectedSummary.rejectionRatioPct = operationalSwings.length > 0 ? Number(((setupSwingDiagnostics.rejectedSwings.length / operationalSwings.length) * 100).toFixed(1)) : null;
+    setupSwingDiagnostics.rejectedSummary.rejectionRatioPct = null;
     setupSwingDiagnostics.rejectedSummary.topReason = Object.entries(byReason).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
     setupSwingDiagnostics.counts = {
       operationalSwingPath: context?.operationalSwingPath?.length || 0,
       setupSwingPath: context?.setupSwingPath?.length || 0,
       visibleStructureLabels: context?.visibleStructureLabels?.length || 0,
+      hiddenStructureLabels: context?.hiddenStructureLabels?.length || 0,
       displaySwings: context?.displaySwings?.length || 0,
       labels: context?.labels?.length || 0,
       renderableLabels: typeof getRenderableStructureLabels === "function" ? getRenderableStructureLabels("4H", context)?.length || 0 : null
     };
+    const finiteAverage = (values) => {
+      const nums = values.map(Number).filter((value) => Number.isFinite(value));
+      return nums.length ? Number((nums.reduce((sum, value) => sum + value, 0) / nums.length).toFixed(3)) : null;
+    };
+    const countBy = (items, getter) => items.reduce((acc, item) => { const key = getter(item) || "unknown"; acc[key] = (acc[key] || 0) + 1; return acc; }, {});
+    const renderSource = context?.debugStats?.visibleSelectionDiagnostics?.renderSource || "unknown";
+    const significantGapThreshold = context?.debugStats?.visibleSelectionDiagnostics?.significantGapThreshold ?? 5;
+    const hiddenReasonCounts = countBy(context?.hiddenStructureLabels || [], (item) => item.hiddenReason);
+    setupSwingDiagnostics.candidateFilterDiagnostics = {
+      sourceName: "observerOnly",
+      inputCount: operationalSwings.length,
+      acceptedCount: null,
+      rejectedCount: setupSwingDiagnostics.rejectedSwings.length,
+      rejectionRatioPct: null,
+      byReason,
+      topReason: setupSwingDiagnostics.rejectedSummary.topReason,
+      rejectedSamples: setupSwingDiagnostics.rejectedSwingsSample,
+      note: "candidate rejection ratio measures observed candidate filter attempts, not final setupSwingPath existence."
+    };
+    setupSwingDiagnostics.finalSetupDiagnostics = {
+      setupSwingPathCount: context?.setupSwingPath?.length || 0,
+      sourceLayerCounts: countBy(context?.setupSwingPath || [], (item) => item.sourceLayer),
+      labelCounts: countBy(context?.setupSwingPath || [], (item) => item.label),
+      averageMovePct: finiteAverage((context?.setupSwingPath || []).map((item) => item.movePct ?? item.movePercent ?? item.moveFromPreviousPct)),
+      averageAtrMove: finiteAverage((context?.setupSwingPath || []).map((item) => item.atrMove ?? item.moveFromPreviousAtr)),
+      earliestTime: (context?.setupSwingPath || [])[0]?.time || null,
+      latestTime: (context?.setupSwingPath || []).at?.(-1)?.time || null
+    };
+    setupSwingDiagnostics.visibleSelectionDiagnostics = {
+      setupSwingPathCount: context?.setupSwingPath?.length || 0,
+      visibleStructureLabelsCount: context?.visibleStructureLabels?.length || 0,
+      displaySwingsCount: context?.displaySwings?.length || 0,
+      labelsCount: context?.labels?.length || 0,
+      renderableLabelsCount: setupSwingDiagnostics.counts.renderableLabels,
+      hiddenFromDisplayCount: context?.hiddenStructureLabels?.length || 0,
+      hiddenReasonCounts,
+      visibleSelectionScoreRange: context?.debugStats?.visibleSelectionDiagnostics?.visibleSelectionScoreRange || { min: null, max: null },
+      significantGapThreshold,
+      renderSource,
+      possibleDataSyncIssue: (context?.setupSwingPath?.length || 0) - (context?.visibleStructureLabels?.length || 0) > significantGapThreshold && renderSource !== "intentional_density_selector"
+    };
     const counts = setupSwingDiagnostics.counts;
-    const rejectionPct = setupSwingDiagnostics.rejectedSummary.rejectionRatioPct;
-    if (counts.setupSwingPath <= 5 && rejectionPct >= 75) {
+    const rejectionPct = setupSwingDiagnostics.candidateFilterDiagnostics.rejectionRatioPct;
+    if (counts.setupSwingPath <= 5 && counts.visibleStructureLabels <= 5 && rejectionPct != null && rejectionPct >= 75) {
       setupSwingDiagnostics.assessment.possibleOverFiltering = true;
       setupSwingDiagnostics.assessment.notes.push("setupSwingPath is very low and rejection ratio is high. Over-filtering likely.");
     }
-    if (counts.setupSwingPath >= 8 && counts.visibleStructureLabels < counts.setupSwingPath) {
+    if (setupSwingDiagnostics.visibleSelectionDiagnostics.possibleDataSyncIssue) {
       setupSwingDiagnostics.assessment.possibleDataSyncIssue = true;
       setupSwingDiagnostics.assessment.notes.push("setupSwingPath exists but visibleStructureLabels is lower. Display population may be wrong.");
     }
-    if (counts.renderableLabels !== null && counts.visibleStructureLabels >= 8 && counts.renderableLabels < counts.visibleStructureLabels) {
+    if (counts.renderableLabels !== null && counts.visibleStructureLabels - counts.renderableLabels > significantGapThreshold && renderSource !== "intentional_density_selector") {
       setupSwingDiagnostics.assessment.possibleRenderIssue = true;
       setupSwingDiagnostics.assessment.notes.push("visibleStructureLabels exists but renderableLabels is lower. Render gate may be filtering too much.");
     }
@@ -1333,6 +1465,18 @@
         note: "Planning context only. Raw Pivot is not structure."
       };
       if (timeframe === "4H") {
+        const visibleSelection = selectVisibleStructureLabels("4H", context);
+        context.visibleStructureLabels = visibleSelection.visibleLabels;
+        context.hiddenStructureLabels = visibleSelection.hiddenLabels;
+        context.displaySwings = context.visibleStructureLabels;
+        context.displayLabels = context.visibleStructureLabels;
+        context.labels = context.visibleStructureLabels;
+        context.sequence = context.visibleStructureLabels.map((swing) => swing.displayLabel || swing.label).filter(Boolean);
+        context.debugStats.visibleMainLabelCount = context.visibleStructureLabels.length;
+        context.debugStats.displayedLabelCount = context.visibleStructureLabels.length;
+        context.debugStats.displaySwingCount = context.visibleStructureLabels.length;
+        context.debugStats.hiddenStructureLabelCount = context.hiddenStructureLabels.length;
+        context.debugStats.visibleSelectionDiagnostics = visibleSelection.diagnostics;
         context.setupSwingDiagnostics = createSetupSwingDiagnostics({ context, operationalSwings: operational.operationalSwingPath || [], setupSwings: setupSwingPath, rules: ltfCfg.setupSwingRules || {}, adaptive });
       }
       window.BtcDash.state.structureContexts[timeframe] = context;
@@ -1497,9 +1641,15 @@
     console.table(diag.counts);
     console.log("\n⚙️ THRESHOLDS:");
     console.table(diag.thresholds);
+    console.log("\n🧪 CANDIDATE FILTER DIAGNOSTICS:");
+    console.table(diag.candidateFilterDiagnostics);
+    console.log("\n✅ FINAL SETUP DIAGNOSTICS:");
+    console.table(diag.finalSetupDiagnostics);
+    console.log("\n👁️ VISIBLE SELECTION DIAGNOSTICS:");
+    console.table(diag.visibleSelectionDiagnostics);
     console.log("\n📈 REJECTION SUMMARY:");
     console.log("Total rejected:", diag.rejectedSummary.totalRejected);
-    console.log("Rejection ratio:", `${diag.rejectedSummary.rejectionRatioPct}%`);
+    console.log("Rejection ratio:", diag.rejectedSummary.rejectionRatioPct == null ? "observer-only" : `${diag.rejectedSummary.rejectionRatioPct}%`);
     console.log("Top rejection reason:", diag.rejectedSummary.topReason);
     console.log("\nRejection by reason:");
     console.table(diag.rejectedSummary.byReason);
@@ -1552,6 +1702,7 @@
     getAdaptiveMinBarGap,
     determineDisplayLabel,
     canInfluenceBias,
+    selectVisibleStructureLabels,
     getRenderableStructureLabels,
     debugStructureRenderSource,
     getStructureContext,
@@ -1576,6 +1727,7 @@
   window.BtcDash.printStructureSwings = printStructureSwings;
   window.BtcDash.debugAdaptiveMetrics = debugAdaptiveMetrics;
   window.BtcDash.getRenderableStructureLabels = getRenderableStructureLabels;
+  window.BtcDash.selectVisibleStructureLabels = selectVisibleStructureLabels;
   window.BtcDash.debugStructureRenderSource = debugStructureRenderSource;
   window.BtcDash.getSetupSwingDiagnostics = getSetupSwingDiagnostics;
   window.BtcDash.printSetupSwingDiagnostics = printSetupSwingDiagnostics;
