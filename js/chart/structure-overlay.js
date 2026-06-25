@@ -9,13 +9,14 @@
   }
 
   function getDisplaySwings(context) {
-    return context?.visibleStructureLabels || context?.displaySwings || context?.displayLabels || context?.labels || [];
+    const timeframe = context?.timeframe || window.BtcDash.chart?.getActiveChartTimeframe?.();
+    return window.BtcDash.getRenderableStructureLabels?.(timeframe, context) || context?.visibleStructureLabels || [];
   }
 
   function buildStructureOverlayItems(timeframe) {
     const context = window.BtcDash.state?.structureContexts?.[timeframe];
     if (!context?.available) return [];
-    const swings = getDisplaySwings(context).filter((item) => item?.label && item?.price && item?.time).slice(-(window.BtcDash.config?.PERFORMANCE_CONFIG?.overlay?.maxMarkersPerLayer || 80)).map((item) => ({
+    const swings = getDisplaySwings(context).filter((item) => (item?.displayLabel || item?.microDisplayLabel || item?.label) && item?.price && item?.time).slice(-(window.BtcDash.config?.PERFORMANCE_CONFIG?.overlay?.maxMarkersPerLayer || 80)).map((item) => ({
       layer: "structure",
       timeframe,
       source: "structure-v2",

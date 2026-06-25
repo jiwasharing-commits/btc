@@ -571,7 +571,7 @@ function addDummyMarkers(closedCandles, running, timeframe) {
   };
   const context = structureContexts[timeframe];
   if (activeLayers.Structure && context?.available) {
-    const structureLabels = context.visibleStructureLabels || context.displaySwings || context.displayLabels || context.labels || [];
+    const structureLabels = window.BtcDash.getRenderableStructureLabels?.(timeframe, context) || [];
     markers.push(...structureLabels
       .filter((label) => {
         const seconds = toUnixSeconds(label.time, label.timeMs ?? label.open_time);

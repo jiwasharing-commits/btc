@@ -930,6 +930,123 @@
     };
   }
 
+  function getStructureDisplayText(swing) {
+    return swing?.displayLabel || swing?.microDisplayLabel || swing?.label || null;
+  }
+
+  function isBaseRenderableStructureLabel(swing) {
+    if (!swing) return false;
+    if (swing.isRunning === true || swing.isPreview === true || swing.source === "running") return false;
+    if (swing.isClosed === false || swing.isFinal === false || swing.x === false) return false;
+    if (swing.isConfirmed === false || swing.canBeAnalysisSource === false) return false;
+    if (swing.isHidden === true) return false;
+    if (swing.structureType === "rawPivot" || swing.structureType === "candidateSwing") return false;
+    if (swing.layer === "rawPivot" || swing.layer === "candidateSwing") return false;
+    if (swing.sourceLayer === "rawPivots" || swing.sourceLayer === "candidateSwings") return false;
+    if (swing.sourceType === "chartMarker" || swing.renderSource === "chartMarker") return false;
+    return Boolean(getStructureDisplayText(swing) && swing.price != null && swing.time);
+  }
+
+  function uniqueStructureLabels(labels = []) {
+    const seen = new Set();
+    return labels.filter((swing) => {
+      const key = swing?.id || `${swing?.time}|${swing?.price}|${getStructureDisplayText(swing)}|${swing?.sourceLayer}`;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function isSetupRenderableLabel(swing) {
+    const label = swing?.label;
+    return isBaseRenderableStructureLabel(swing)
+      && swing.sourceLayer === "setupSwings"
+      && swing.isSetup === true
+      && (swing.layerType === "setup_structure" || swing.layer === "setupSwings")
+      && ["HH", "HL", "LH", "LL", "EH", "EL"].includes(label)
+      && Boolean(swing.displayLabel);
+  }
+
+  function getRenderableStructureLabels(timeframe, structureContext, options = {}) {
+    const ctx = structureContext || getStructureContext(timeframe) || {};
+    if (timeframe === "4H") {
+      const setupSource = [
+        ...(ctx.visibleStructureLabels || []),
+        ...(ctx.setupSwingPath || []),
+        ...(ctx.setupSwings || [])
+      ];
+      return uniqueStructureLabels(setupSource)
+        .filter(isSetupRenderableLabel)
+        .map((swing) => ({ ...swing, displayLabel: swing.displayLabel || swing.label, renderSource: "setupSwingsOnly" }));
+    }
+    if (timeframe === "1H") {
+      const cfg = getLtfLabelConfig("1H");
+      const showMicroLabels = options.showMicroLabels ?? cfg.display?.showMicroLabels ?? false;
+      if (!showMicroLabels) return [];
+      const timingSource = [
+        ...(ctx.visibleStructureLabels || []),
+        ...(ctx.timingSwingPath || []),
+        ...(ctx.timingSwings || [])
+      ];
+      return uniqueStructureLabels(timingSource).filter((swing) => {
+        const microLabel = swing.microDisplayLabel || swing.displayLabel;
+        return isBaseRenderableStructureLabel({ ...swing, displayLabel: microLabel })
+          && (swing.sourceLayer === "timingSwings" || swing.isMicro === true)
+          && swing.canInfluenceBias === false
+          && /^Micro (HH|HL|LH|LL|EH|EL)$/.test(String(microLabel || ""));
+      }).map((swing) => ({ ...swing, displayLabel: swing.microDisplayLabel || swing.displayLabel, renderSource: "microTimingOptional" }));
+    }
+    const compatibleSource = (ctx.visibleStructureLabels?.length ? ctx.visibleStructureLabels : (ctx.displaySwings?.length ? ctx.displaySwings : (ctx.displayLabels?.length ? ctx.displayLabels : (ctx.labels || []))));
+    return uniqueStructureLabels(compatibleSource)
+      .filter(isBaseRenderableStructureLabel)
+      .map((swing) => ({ ...swing, displayLabel: getStructureDisplayText(swing), renderSource: "existingCompatibleRender" }));
+  }
+
+  function debugStructureRenderSource(timeframe = "4H") {
+    const ctx = getStructureContext(timeframe) || createEmptyStructureContext(timeframe);
+    const renderable = getRenderableStructureLabels(timeframe, ctx);
+    const rejectedRunning = [
+      ...(ctx.visibleStructureLabels || []),
+      ...(ctx.displaySwings || []),
+      ...(ctx.labels || []),
+      ...(ctx.operationalSwingPath || [])
+    ].filter((swing) => swing?.isRunning === true || swing?.isPreview === true || swing?.source === "running");
+    const rejectedUnconfirmed = [
+      ...(ctx.visibleStructureLabels || []),
+      ...(ctx.displaySwings || []),
+      ...(ctx.labels || [])
+    ].filter((swing) => swing?.isConfirmed === false);
+    const rejectedOperational = (ctx.operationalSwingPath || []).filter((swing) => !renderable.some((item) => item.id === swing.id));
+    const rejectedLegacy = timeframe === "4H"
+      ? [...(ctx.displaySwings || []), ...(ctx.labels || [])].filter((swing) => !isSetupRenderableLabel(swing))
+      : [];
+    const renderSource = timeframe === "4H" ? "setupSwingsOnly" : timeframe === "1H" ? "timingHiddenByDefault" : "existingCompatibleRender";
+    const warnings = [];
+    if (timeframe === "4H" && !renderable.length) warnings.push("No valid 4H setup labels");
+    if (timeframe === "4H" && renderable.some((swing) => swing.sourceLayer !== "setupSwings")) warnings.push("Renderable 4H label outside setupSwings source");
+    if (timeframe === "1H" && renderable.some((swing) => !/^Micro /.test(String(swing.displayLabel || "")))) warnings.push("1H plain label attempted to render");
+    return {
+      timeframe,
+      setupSwingPathCount: ctx.setupSwingPath?.length || 0,
+      operationalSwingPathCount: ctx.operationalSwingPath?.length || 0,
+      visibleStructureLabelsCount: ctx.visibleStructureLabels?.length || 0,
+      displaySwingsCount: ctx.displaySwings?.length || 0,
+      labelsCount: ctx.labels?.length || 0,
+      renderableLabelCount: renderable.length,
+      rejectedOperationalCount: rejectedOperational.length,
+      rejectedLegacyCount: rejectedLegacy.length,
+      rejectedRunningCount: rejectedRunning.length,
+      rejectedUnconfirmedCount: rejectedUnconfirmed.length,
+      renderSource,
+      allRenderableAreSetupSwings: timeframe === "4H" ? renderable.every((swing) => swing.sourceLayer === "setupSwings" && swing.isSetup === true) : null,
+      noOperationalLabelsShowing: renderable.every((swing) => swing.sourceLayer !== "operationalSwings" && swing.sourceLayer !== "operationalSwingPath"),
+      noRunningLabels: renderable.every((swing) => swing.isRunning !== true && swing.source !== "running"),
+      sampleRenderableLabels: renderable.slice(0, 5),
+      sampleRejectedOperational: rejectedOperational.slice(0, 5),
+      warnings
+    };
+  }
+
   function buildDisplaySwings(analysisSwings, timeframe) {
     return buildCleanDisplaySwings(analysisSwings, timeframe);
   }
@@ -1005,11 +1122,21 @@
       if (timeframe === "1H") {
         bias = { ...bias, bias: "Timing Only", trendState: sweepStatus.hasSweep ? "Sweep Reaction Timing" : "Micro Timing Context", status: sweepStatus.hasSweep ? "Sweep Reaction Timing" : "Timing only", setupState: "Timing only", timingState: sweepStatus.hasSweep ? "Sweep Reaction Timing" : "Timing only", canOverrideHtf: false, summary: `${timeframe} timing-only micro structure. 1H does not influence Weekly/Daily/4H bias. ${sweepStatus.note || "Reference only."}` };
       }
+      const setupSwingPath = timeframe === "4H" ? setupSwings : [];
+      const timingSwingPath = timeframe === "1H" ? timingSwings : [];
+      let visibleStructureLabels = [];
       let displaySwings = [];
-      if (timeframe === "4H") displaySwings = buildCleanDisplaySwings(primary.filter((swing) => swing.sourceLayer === "setupSwings"), timeframe).slice(-(ltfCfg.display?.maxVisibleSetupLabels || 10)).map((swing) => ({ ...swing, displayLabel: swing.displayLabel || swing.label, label: swing.displayLabel || swing.label }));
-      else if (timeframe === "1H") displaySwings = (ltfCfg.display?.showMicroLabels ? primary.slice(-(ltfCfg.display?.maxVisibleMicroLabels || 0)).map((swing) => ({ ...swing, label: swing.microDisplayLabel, displayLabel: swing.microDisplayLabel })) : []);
-      else displaySwings = buildDisplaySwings(primary, timeframe);
-      const visibleStructureLabels = displaySwings.filter((swing) => swing?.displayLabel || swing?.label);
+      if (timeframe === "4H") {
+        visibleStructureLabels = getRenderableStructureLabels(timeframe, { setupSwingPath, setupSwings });
+        // Legacy adapter only. Do not use operationalSwingPath as 4H chart label source.
+        displaySwings = visibleStructureLabels;
+      } else if (timeframe === "1H") {
+        visibleStructureLabels = getRenderableStructureLabels(timeframe, { timingSwingPath, timingSwings }, { showMicroLabels: ltfCfg.display?.showMicroLabels });
+        displaySwings = visibleStructureLabels;
+      } else {
+        displaySwings = buildDisplaySwings(primary, timeframe);
+        visibleStructureLabels = getRenderableStructureLabels(timeframe, { visibleStructureLabels: displaySwings, displaySwings });
+      }
       const displaySource = timeframe === "4H" ? "setupSwings" : timeframe === "1H" ? "timingSwingsHidden" : analysisSource;
       const classificationWarnings = primary.filter((swing) => ["HH", "HL", "LH", "LL"].includes(swing.label) && (!swing.comparedTo || !swing.classificationReason)).map((swing) => `${swing.id} missing comparison metadata`);
       const biasContributionSummary = buildBiasContributionSummary(timeframe, analysisSource, primary, hiddenOperationalSwings, hiddenMicroSwings);
@@ -1030,8 +1157,8 @@
         setupOperationalSwings,
         timingOperationalSwings,
         operationalStructureLabels: timeframe === "4H" ? hiddenOperationalSwings : timeframe === "1H" ? hiddenMicroSwings : [],
-        setupSwingPath: timeframe === "4H" ? setupSwings : [],
-        timingSwingPath: timeframe === "1H" ? timingSwings : [],
+        setupSwingPath,
+        timingSwingPath,
         hiddenOperationalSwings,
         hiddenMicroSwings,
         visibleStructureLabels,
@@ -1246,6 +1373,8 @@
     getAdaptiveMinBarGap,
     determineDisplayLabel,
     canInfluenceBias,
+    getRenderableStructureLabels,
+    debugStructureRenderSource,
     getStructureContext,
     getStructuralSourceSwings,
     rebuildAllStructureContexts: rebuildStructureContexts,
@@ -1267,4 +1396,6 @@
   window.BtcDash.debugStructureClassification = debugStructureClassification;
   window.BtcDash.printStructureSwings = printStructureSwings;
   window.BtcDash.debugAdaptiveMetrics = debugAdaptiveMetrics;
+  window.BtcDash.getRenderableStructureLabels = getRenderableStructureLabels;
+  window.BtcDash.debugStructureRenderSource = debugStructureRenderSource;
 })();
