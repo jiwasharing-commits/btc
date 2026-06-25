@@ -1047,6 +1047,144 @@
     };
   }
 
+  function createSetupSwingDiagnostics({ context, operationalSwings = [], setupSwings = [], rules = {}, adaptive = {} }) {
+    const setupSwingDiagnostics = {
+      timeframe: "4H",
+      mode: "diagnostic_only",
+      logicChanged: false,
+      counts: { operationalSwingPath: 0, setupSwingPath: 0, visibleStructureLabels: 0, displaySwings: 0, labels: 0, renderableLabels: 0 },
+      thresholds: {
+        minLegBars: rules.minLegBars ?? null,
+        minBarGap: rules.minBarGap ?? null,
+        baseMinMovePct: rules.baseMinMovePct ?? null,
+        minMovePctFloor: rules.minMovePctFloor ?? null,
+        minMovePctCeiling: rules.minMovePctCeiling ?? null,
+        adaptiveThreshold: adaptive.adaptiveThreshold ?? null,
+        minAtrMove: rules.minAtrMove ?? null,
+        requireCounterSwing: rules.requireCounterSwing ?? null,
+        requireCloseConfirmation: rules.requireCloseConfirmation ?? null,
+        requireAlternatingSequence: rules.requireAlternatingSequence ?? null,
+        volatilityRatio: adaptive.volatilityRatio ?? null
+      },
+      filters: {
+        confirmed: { passed: 0, rejected: 0 },
+        running: { passed: 0, rejected: 0 },
+        minLegBars: { passed: 0, rejected: 0 },
+        minBarGap: { passed: 0, rejected: 0 },
+        minMovePct: { passed: 0, rejected: 0 },
+        minAtrMove: { passed: 0, rejected: 0 },
+        singleCandleSpike: { passed: 0, rejected: 0 },
+        counterSwing: { passed: 0, rejected: 0 },
+        alternatingSequence: { passed: 0, rejected: 0 },
+        closeConfirmation: { passed: 0, rejected: 0 },
+        weakLeg: { passed: 0, rejected: 0 },
+        microRetest: { passed: 0, rejected: 0 },
+        other: { passed: 0, rejected: 0 }
+      },
+      rejectedSwings: [],
+      rejectedSwingsSample: [],
+      acceptedSetupSwings: [],
+      rejectedSummary: { totalRejected: 0, rejectionRatioPct: null, byReason: {}, topReason: null },
+      assessment: { possibleOverFiltering: false, possibleRenderIssue: false, possibleDataSyncIssue: false, notes: [] }
+    };
+    const trackReject = (reason, swing, extra = {}) => {
+      const bucket = setupSwingDiagnostics.filters[reason] ? reason : "other";
+      setupSwingDiagnostics.filters[bucket].rejected += 1;
+      setupSwingDiagnostics.rejectedSwings.push({
+        index: swing?.index,
+        time: swing?.time,
+        type: swing?.type,
+        label: swing?.label,
+        price: swing?.price,
+        legBars: swing?.legBars,
+        barGap: swing?.barGap,
+        movePct: swing?.movePct ?? swing?.movePercent ?? swing?.moveFromPreviousPct,
+        atrMove: swing?.atrMove ?? swing?.moveFromPreviousAtr,
+        isConfirmed: swing?.isConfirmed,
+        isRunning: swing?.isRunning,
+        sourceLayer: swing?.sourceLayer,
+        reason: bucket,
+        extra
+      });
+    };
+    const trackPass = (reason) => {
+      const bucket = setupSwingDiagnostics.filters[reason] ? reason : "other";
+      setupSwingDiagnostics.filters[bucket].passed += 1;
+    };
+    const acceptedIds = new Set((setupSwings || []).map((swing) => swing?.id).filter(Boolean));
+    (operationalSwings || []).forEach((swing, index, all) => {
+      if (acceptedIds.has(swing?.id)) {
+        ["confirmed", "running", "minLegBars", "minBarGap", "minMovePct", "minAtrMove", "counterSwing", "alternatingSequence", "closeConfirmation"].forEach(trackPass);
+        return;
+      }
+      if (swing?.isRunning === true || swing?.source === "running") { trackReject("running", swing); return; }
+      trackPass("running");
+      if (swing?.isConfirmed === false) { trackReject("confirmed", swing); return; }
+      trackPass("confirmed");
+      const previous = all[index - 1];
+      const legBars = Number(swing?.legBars ?? Math.abs(Number(swing?.index ?? swing?.barIndex ?? 0) - Number(previous?.index ?? previous?.barIndex ?? 0)));
+      if (Number.isFinite(legBars) && legBars < Number(rules.minLegBars ?? 8)) { trackReject("minLegBars", swing, { observed: legBars, threshold: rules.minLegBars ?? 8 }); return; }
+      trackPass("minLegBars");
+      if (Number.isFinite(legBars) && legBars < Number(adaptive.adaptiveMinBarGap ?? rules.minBarGap ?? 10)) { trackReject("minBarGap", swing, { observed: legBars, threshold: adaptive.adaptiveMinBarGap ?? rules.minBarGap ?? 10 }); return; }
+      trackPass("minBarGap");
+      const movePct = Number(swing?.movePct ?? swing?.movePercent ?? swing?.moveFromPreviousPct ?? (previous?.price ? Math.abs(Number(swing?.price) - Number(previous.price)) / Math.max(1e-9, Number(previous.price)) * 100 : NaN));
+      if (Number.isFinite(movePct) && movePct < Number(adaptive.adaptiveThreshold ?? rules.baseMinMovePct ?? 1.8)) { trackReject("minMovePct", swing, { observed: movePct, threshold: adaptive.adaptiveThreshold ?? rules.baseMinMovePct ?? 1.8 }); return; }
+      trackPass("minMovePct");
+      const atrMove = Number(swing?.atrMove ?? swing?.moveFromPreviousAtr);
+      if (Number.isFinite(atrMove) && atrMove < Number(rules.minAtrMove ?? 1.4)) { trackReject("minAtrMove", swing, { observed: atrMove, threshold: rules.minAtrMove ?? 1.4 }); return; }
+      trackPass("minAtrMove");
+      trackReject("other", swing, { note: "Observer-only diagnostic could not map this rejected swing to a measured threshold." });
+    });
+    setupSwingDiagnostics.acceptedSetupSwings = (setupSwings || []).slice(0, 30).map((swing) => ({
+      index: swing?.index,
+      time: swing?.time,
+      type: swing?.type,
+      label: swing?.label,
+      displayLabel: swing?.displayLabel,
+      price: swing?.price,
+      legBars: swing?.legBars,
+      barGap: swing?.barGap,
+      movePct: swing?.movePct ?? swing?.movePercent ?? swing?.moveFromPreviousPct,
+      atrMove: swing?.atrMove ?? swing?.moveFromPreviousAtr,
+      sourceLayer: swing?.sourceLayer,
+      isSetup: swing?.isSetup,
+      validationFactors: swing?.validationFactors
+    }));
+    setupSwingDiagnostics.rejectedSwingsSample = setupSwingDiagnostics.rejectedSwings.slice(0, 30);
+    const byReason = {};
+    setupSwingDiagnostics.rejectedSwings.forEach((item) => { byReason[item.reason] = (byReason[item.reason] || 0) + 1; });
+    setupSwingDiagnostics.rejectedSummary.byReason = byReason;
+    setupSwingDiagnostics.rejectedSummary.totalRejected = setupSwingDiagnostics.rejectedSwings.length;
+    setupSwingDiagnostics.rejectedSummary.rejectionRatioPct = operationalSwings.length > 0 ? Number(((setupSwingDiagnostics.rejectedSwings.length / operationalSwings.length) * 100).toFixed(1)) : null;
+    setupSwingDiagnostics.rejectedSummary.topReason = Object.entries(byReason).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    setupSwingDiagnostics.counts = {
+      operationalSwingPath: context?.operationalSwingPath?.length || 0,
+      setupSwingPath: context?.setupSwingPath?.length || 0,
+      visibleStructureLabels: context?.visibleStructureLabels?.length || 0,
+      displaySwings: context?.displaySwings?.length || 0,
+      labels: context?.labels?.length || 0,
+      renderableLabels: typeof getRenderableStructureLabels === "function" ? getRenderableStructureLabels("4H", context)?.length || 0 : null
+    };
+    const counts = setupSwingDiagnostics.counts;
+    const rejectionPct = setupSwingDiagnostics.rejectedSummary.rejectionRatioPct;
+    if (counts.setupSwingPath <= 5 && rejectionPct >= 75) {
+      setupSwingDiagnostics.assessment.possibleOverFiltering = true;
+      setupSwingDiagnostics.assessment.notes.push("setupSwingPath is very low and rejection ratio is high. Over-filtering likely.");
+    }
+    if (counts.setupSwingPath >= 8 && counts.visibleStructureLabels < counts.setupSwingPath) {
+      setupSwingDiagnostics.assessment.possibleDataSyncIssue = true;
+      setupSwingDiagnostics.assessment.notes.push("setupSwingPath exists but visibleStructureLabels is lower. Display population may be wrong.");
+    }
+    if (counts.renderableLabels !== null && counts.visibleStructureLabels >= 8 && counts.renderableLabels < counts.visibleStructureLabels) {
+      setupSwingDiagnostics.assessment.possibleRenderIssue = true;
+      setupSwingDiagnostics.assessment.notes.push("visibleStructureLabels exists but renderableLabels is lower. Render gate may be filtering too much.");
+    }
+    if (counts.setupSwingPath <= 5 && counts.visibleStructureLabels <= 5 && counts.renderableLabels <= 5) {
+      setupSwingDiagnostics.assessment.notes.push("The whole pipeline is sparse from setupSwingPath onward.");
+    }
+    return setupSwingDiagnostics;
+  }
+
   function buildDisplaySwings(analysisSwings, timeframe) {
     return buildCleanDisplaySwings(analysisSwings, timeframe);
   }
@@ -1194,6 +1332,9 @@
         summary: bias.summary,
         note: "Planning context only. Raw Pivot is not structure."
       };
+      if (timeframe === "4H") {
+        context.setupSwingDiagnostics = createSetupSwingDiagnostics({ context, operationalSwings: operational.operationalSwingPath || [], setupSwings: setupSwingPath, rules: ltfCfg.setupSwingRules || {}, adaptive });
+      }
       window.BtcDash.state.structureContexts[timeframe] = context;
       try { structureContexts[timeframe] = context; } catch (error) { /* ignore lexical fallback */ }
       return context;
@@ -1341,6 +1482,42 @@
     return table;
   }
 
+  function getSetupSwingDiagnostics(timeframe = "4H") {
+    return window.BtcDash?.state?.structureContexts?.[timeframe]?.setupSwingDiagnostics || null;
+  }
+
+  function printSetupSwingDiagnostics(timeframe = "4H") {
+    const diag = getSetupSwingDiagnostics(timeframe);
+    if (!diag) {
+      console.warn("No setupSwingDiagnostics found for", timeframe);
+      return null;
+    }
+    console.log("=== SETUP SWING DIAGNOSTICS:", timeframe, "===\n");
+    console.log("📊 COUNTS:");
+    console.table(diag.counts);
+    console.log("\n⚙️ THRESHOLDS:");
+    console.table(diag.thresholds);
+    console.log("\n📈 REJECTION SUMMARY:");
+    console.log("Total rejected:", diag.rejectedSummary.totalRejected);
+    console.log("Rejection ratio:", `${diag.rejectedSummary.rejectionRatioPct}%`);
+    console.log("Top rejection reason:", diag.rejectedSummary.topReason);
+    console.log("\nRejection by reason:");
+    console.table(diag.rejectedSummary.byReason);
+    console.log("\n⚠️ ASSESSMENT:");
+    console.log("Over-filtering?", diag.assessment.possibleOverFiltering);
+    console.log("Render issue?", diag.assessment.possibleRenderIssue);
+    console.log("Data sync issue?", diag.assessment.possibleDataSyncIssue);
+    if (diag.assessment.notes.length > 0) {
+      console.log("Notes:");
+      diag.assessment.notes.forEach((note) => console.log("  -", note));
+    }
+    console.log("\n📋 SAMPLE REJECTED SWINGS (first 20):");
+    console.table((diag.rejectedSwingsSample || []).slice(0, 20));
+    console.log("\n✅ SAMPLE ACCEPTED SETUP SWINGS (first 20):");
+    console.table((diag.acceptedSetupSwings || []).slice(0, 20));
+    return diag;
+  }
+
   const api = {
     rebuildStructureContexts,
     rebuildStructureForTimeframe,
@@ -1365,6 +1542,8 @@
     debugStructureClassification,
     printStructureSwings,
     debugAdaptiveMetrics,
+    getSetupSwingDiagnostics,
+    printSetupSwingDiagnostics,
     getClosedCandlesForStructure,
     calculateVolatilityRatio,
     applyAdaptiveAdjustment,
@@ -1398,4 +1577,6 @@
   window.BtcDash.debugAdaptiveMetrics = debugAdaptiveMetrics;
   window.BtcDash.getRenderableStructureLabels = getRenderableStructureLabels;
   window.BtcDash.debugStructureRenderSource = debugStructureRenderSource;
+  window.BtcDash.getSetupSwingDiagnostics = getSetupSwingDiagnostics;
+  window.BtcDash.printSetupSwingDiagnostics = printSetupSwingDiagnostics;
 })();
