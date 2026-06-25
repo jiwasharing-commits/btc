@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BTC Pattern Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="dashboard-shell">
+      <header class="hero-header">
+        <div>
+          <p class="eyebrow">Pulse Lab style workspace</p>
+          <h1>BTC Pattern Dashboard</h1>
+          <p class="subtitle">BTC-USD | Uploaded JSON + Binance Sync | Running Candle: Preview Only</p>
+        </div>
+        <div class="badge-row" aria-label="Mode badges">
+          <span class="badge">Closed Candle Only</span>
+          <span class="badge badge-warn">Preview Running Candle</span>
+          <span class="badge">MTF Mode</span>
+        </div>
+      </header>
+
+      <section class="control-bar" aria-label="Dashboard controls">
+        <button id="load-data" type="button">Load Repo Data</button>
+        <button id="update-binance" type="button">Update from Binance</button>
+        <button id="auto-update" type="button">Auto Update: ON</button>
+        <button id="reset-cache" type="button" class="ghost">Reset Local Cache</button>
+      </section>
+
+      <section id="data-status" class="data-status-bar" aria-live="polite"></section>
+      <section id="binance-debug" class="binance-debug" aria-live="polite"></section>
+
+      <nav class="tab-row workspace-tabs" aria-label="Workspace tabs"></nav>
+
+      <section class="summary-grid" aria-label="Global summary cards"></section>
+
+      <section id="workspace-content" class="workspace-content" aria-live="polite"></section>
+
+      <section class="layer-control" aria-label="Layer control">
+        <button class="active" type="button" data-layer="MA">MA</button>
+        <button class="active" type="button" data-layer="Structure">Structure</button>
+        <button class="active" type="button" data-layer="FVG">FVG</button>
+        <button class="active" type="button" data-layer="S/R">S/R</button>
+        <button type="button" data-layer="EQH/EQL">EQH/EQL</button>
+        <button class="active" type="button" data-layer="Channel">Channel</button>
+        <button class="active" type="button" data-layer="Confluence">Confluence</button>
+        <button type="button" data-layer="Scenario Levels">Scenario Levels</button>
+      </section>
+
+      <nav class="tab-row detail-tabs" aria-label="Bottom detail tabs"></nav>
+      <section id="detail-content" class="detail-content" aria-live="polite"></section>
+    </main>
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="js/core/config-timeframes.js"></script>
+    <script src="js/core/config-engines.js"></script>
+    <script src="js/core/config-ui.js"></script>
+    <script src="js/core/config.js"></script>
+    <script src="js/core/state.js"></script>
+    <script src="js/core/utils.js"></script>
+    <script src="js/data/data-service.js"></script>
+    <script src="js/engines/structure-engine.js"></script>
+    <script src="js/engines/liquidity-engine.js"></script>
+    <script src="js/engines/sr-engine.js"></script>
+    <script src="js/engines/fvg-engine.js"></script>
+    <script src="js/engines/channel-engine.js"></script>
+    <script src="js/engines/market-zones-engine.js"></script>
+    <script src="js/engines/confluence-engine.js"></script>
+    <script src="js/engines/scenario-engine.js"></script>
+    <script src="js/engines/risk-plan-engine.js"></script>
+    <script src="js/engines/reaction-study-engine.js"></script>
+    <script src="js/engines/audit-quality-engine.js"></script>
+    <script src="js/engines/analysis-engine.js"></script>
+    <script src="js/chart/chart-adapter.js"></script>
+    <script src="js/chart/overlay-registry.js"></script>
+    <script src="js/chart/chart-autoscale-guard.js"></script>
+    <script src="js/chart/candle-renderer.js"></script>
+    <script src="js/chart/marker-renderer.js"></script>
+    <script src="js/chart/ma-overlay.js"></script>
+    <script src="js/chart/structure-overlay.js"></script>
+    <script src="js/chart/zone-overlay.js"></script>
+    <script src="js/chart/sr-overlay.js"></script>
+    <script src="js/chart/fvg-overlay.js"></script>
+    <script src="js/chart/channel-overlay.js"></script>
+    <script src="js/chart/liquidity-overlay.js"></script>
+    <script src="js/chart/confluence-overlay.js"></script>
+    <script src="js/chart/scenario-overlay.js"></script>
+    <script src="js/chart/chart-view.js"></script>
+    <script src="js/ui/ui-formatters.js"></script>
+    <script src="js/ui/summary-cards.js"></script>
+    <script src="js/ui/workspace-tabs.js"></script>
+    <script src="js/ui/layer-controls.js"></script>
+    <script src="js/ui/bottom-tabs.js"></script>
+    <script src="js/ui/indicator-panel.js"></script>
+    <script src="js/ui/pattern-summary-panel.js"></script>
+    <script src="js/ui/structure-panel.js"></script>
+    <script src="js/ui/market-zones-panel.js"></script>
+    <script src="js/ui/fvg-panel.js"></script>
+    <script src="js/ui/sr-panel.js"></script>
+    <script src="js/ui/channel-panel.js"></script>
+    <script src="js/ui/confluence-panel.js"></script>
+    <script src="js/ui/scenario-panel.js"></script>
+    <script src="js/ui/reaction-panel.js"></script>
+    <script src="js/ui/table-panel.js"></script>
+    <script src="js/ui/audit-panel.js"></script>
+    <script src="js/ui/ui-render.js"></script>
+    <script src="js/core/pipeline.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>
